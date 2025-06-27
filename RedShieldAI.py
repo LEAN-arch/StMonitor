@@ -1,7 +1,7 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL, VERIFIED DEPLOYMENT VERSION 4: Fixes the click-handling logic definitively
-# by correctly accessing the `.picked_objects` attribute, which is a list,
-# and robustly checking for None before access.
+# FINAL, VERIFIED DEPLOYMENT VERSION 5: Fixes the click-handling logic definitively
+# by correctly handling the st.pydeck_chart return value, which is either a list of
+# picked objects or None.
 
 import streamlit as st
 import pandas as pd
@@ -172,28 +172,27 @@ def main():
         with map_col:
             zones_gdf, hosp_df, amb_df, inc_df, heat_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, config.get('styling', {}))
             deck = create_deck_gl_map(zones_gdf, hosp_df, amb_df, inc_df, heat_df, st.session_state.get('route_info'), config.get('styling', {}))
-            clicked_state = st.pydeck_chart(deck, use_container_width=True)
             
             # ##################################################################
-            # ###############     THE FINAL, CORRECTED LOGIC     ###############
+            # ###############      THE FINAL, CORRECTED LOGIC      ###############
             # ##################################################################
-            # The return value from pydeck_chart is either None or a dictionary.
-            # We must check for None before doing anything else.
-            if clicked_state is not None:
-                # The .picked_objects attribute is a list of picked items.
-                picked_list = clicked_state.get("picked_objects")
+            # The return value from pydeck_chart is a dictionary of the picked object,
+            # or None if no object is picked.
+            picked_info = st.pydeck_chart(deck, use_container_width=True)
 
-                # Check if the list exists and is not empty.
-                if picked_list:
-                    selected_obj = picked_list[0]
-                    if 'id' in selected_obj:
-                        if st.session_state.get('selected_incident', {}).get('id') != selected_obj['id']:
-                            st.session_state.selected_incident = next((inc for inc in all_incidents if inc.get('id') == selected_obj['id']), None)
-                            if st.session_state.selected_incident:
-                                st.session_state.route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, risk_scores)
-                            else: 
-                                st.session_state.route_info = None
-                            st.rerun()
+            if picked_info and picked_info["object"]:
+                # The data for the clicked object is in the 'object' key
+                selected_obj = picked_info["object"]
+                
+                # We still check for 'id' to make sure we clicked an incident layer
+                if 'id' in selected_obj:
+                    if st.session_state.get('selected_incident', {}).get('id') != selected_obj['id']:
+                        st.session_state.selected_incident = next((inc for inc in all_incidents if inc.get('id') == selected_obj['id']), None)
+                        if st.session_state.selected_incident:
+                            st.session_state.route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, risk_scores)
+                        else: 
+                            st.session_state.route_info = None
+                        st.rerun()
             # ##################################################################
             # ###############   END OF THE DEFINITIVE FIX SECTION   ##############
             # ##################################################################
