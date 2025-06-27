@@ -1,7 +1,7 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL, ROBUST DEPLOYMENT VERSION 10: Implements a standard callback-driven
-# state management pattern for the dropdown, which is the most reliable method
-# in Streamlit. This guarantees correct behavior on user selection.
+# FINAL, FULLY DOCUMENTED DEPLOYMENT VERSION: Includes comprehensive legends,
+# action-oriented explanations, and contextual help for all KPIs, maps, and charts,
+# ensuring full interpretability for command staff.
 
 import streamlit as st
 import pandas as pd
@@ -18,7 +18,7 @@ import os
 import json
 import time
 
-# --- L0: CONFIGURATION, PATHS, AND SELF-SETUP ---
+# --- L0: CONFIGURATION, PATHS, AND SELF-SETUP (Unchanged) ---
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, 'config.yaml')
 MODEL_FILE = os.path.join(SCRIPT_DIR, 'demand_model.xgb')
@@ -29,7 +29,7 @@ def _train_and_save_model():
     try:
         with open(LOCK_FILE, 'x') as f: f.write(str(os.getpid()))
     except FileExistsError:
-        st.info("Another user is initializing the AI model. Please wait a moment...")
+        st.info("Another process is initializing the AI model. Please wait a moment...")
         while os.path.exists(LOCK_FILE): time.sleep(2)
         return
     try:
@@ -81,7 +81,7 @@ class DataFusionFabric:
         state = {}; all_nodes = list(_self.road_graph.nodes)
         for zone, data in _self.zones.items():
             incidents = []
-            for _ in range(np.random.randint(0, 4)):
+            for _ in range(np.random.randint(2, 8)):
                 node = np.random.choice(all_nodes); loc_coords = _self.road_graph.nodes[node]['pos']; incident_point = Point(loc_coords[1], loc_coords[0])
                 if data['polygon'].contains(incident_point): incidents.append({"id": f"I-{zone[:2].upper()}{np.random.randint(100,999)}", "location": incident_point, "priority": np.random.choice([1, 2, 3], p=[0.6, 0.3, 0.1]), "node": node})
             state[zone] = {"traffic": np.random.uniform(0.3, 1.0), "active_incidents": incidents}
@@ -136,13 +136,14 @@ def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_co
     max_risk = max(1, zones_gdf['risk'].max()); zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [220, 53, 69, int(200 * _safe_division(r,max_risk))]).tolist()
     return zones_gdf, hospital_df, ambulance_df, incident_df, heatmap_df
 def create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, heatmap_df, route_info=None, style_config=None):
-    # This map is now for visualization only. 'pickable' is still useful for tooltips.
     zone_layer = pdk.Layer("PolygonLayer", data=zones_gdf, get_polygon="geometry", filled=True, stroked=False, extruded=True, get_elevation="risk * 3000", get_fill_color="fill_color", opacity=0.1, pickable=True); hospital_layer = pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style_config['sizes']['hospital'], get_color='color', size_scale=15, pickable=True); ambulance_layer = pdk.Layer("IconLayer", data=ambulance_df, get_icon="icon_data", get_position='[lon, lat]', get_size='size', get_color='color', size_scale=15, pickable=True); incident_layer = pdk.Layer("ScatterplotLayer", data=incident_df, get_position='[lon, lat]', get_radius='size*20', get_fill_color=style_config['colors']['incident_halo'], pickable=True, radius_min_pixels=5, stroked=True, get_line_width=100, get_line_color=[*style_config['colors']['incident_halo'], 100]); heatmap_layer = pdk.Layer("HeatmapLayer", data=heatmap_df, get_position='[lon, lat]', opacity=0.3, aggregation='"MEAN"', threshold=0.1, get_weight=1); layers = [heatmap_layer, zone_layer, hospital_layer, ambulance_layer, incident_layer]
     if route_info and "error" not in route_info and "route_path_coords" in route_info:
         layers.append(pdk.Layer('PathLayer', data=pd.DataFrame([{'path': route_info['route_path_coords']}]), get_path='path', get_width=5, get_color=style_config['colors']['route_path'], width_scale=1, width_min_pixels=5))
     view_state = pdk.ViewState(latitude=32.525, longitude=-117.02, zoom=11.5, bearing=0, pitch=50); tooltip = {"html": "<b>{name}</b><br/>{tooltip_text}", "style": {"backgroundColor": "#333", "color": "white", "border": "1px solid #555", "border-radius": "5px", "padding": "5px"}}; return pdk.Deck(layers=layers, initial_view_state=view_state, map_style="mapbox://styles/mapbox/dark-v10", tooltip=tooltip)
 def display_ai_rationale(route_info: Dict):
-    st.subheader("AI Dispatch Rationale"); best = route_info['routing_analysis'].iloc[0]; st.success(f"**Recommended:** Dispatch `{route_info['ambulance_unit']}` to `{route_info['best_hospital']}`", icon="✅"); st.markdown(f"**Reason:** Optimal balance of lowest travel time and hospital readiness. The A* algorithm calculated a total risk-adjusted ETA of **{best.get('eta_min', 0):.1f} min** via the city's road network, while accounting for a hospital load penalty of `{best.get('load_penalty',0):.1f}`.")
+    st.markdown("---")
+    st.markdown("> The AI balances travel time, route safety, and hospital capacity to find the optimal destination.")
+    st.subheader("AI Dispatch Rationale"); best = route_info['routing_analysis'].iloc[0]; st.success(f"**Recommended:** Dispatch `{route_info['ambulance_unit']}` to `{route_info['best_hospital']}`", icon="✅"); st.markdown(f"**Reason:** Optimal balance of the lowest travel time and hospital readiness. The A* algorithm calculated a risk-adjusted ETA of **{best.get('eta_min', 0):.1f} min**.")
     if len(route_info['routing_analysis']) > 1:
         rejected = route_info['routing_analysis'].iloc[1]; reasons = []
         if (rejected.get('eta_min', 0) / best.get('eta_min', 1)) > 1.15: reasons.append(f"a significantly longer ETA ({rejected.get('eta_min', 0):.1f} min)")
@@ -153,64 +154,51 @@ def display_ai_rationale(route_info: Dict):
 # --- L3: MAIN APPLICATION ---
 def main():
     st.set_page_config(page_title="RedShield AI: Elite Command", layout="wide", initial_sidebar_state="expanded")
-    
-    # Initialize stateful objects
-    config = load_config(CONFIG_FILE)
-    if 'cognitive_engine' not in st.session_state:
-        st.session_state.cognitive_engine = CognitiveEngine(DataFusionFabric(config))
-    engine = st.session_state.cognitive_engine
-    data_fabric = engine.data_fabric
-
-    # Get live data for this run
-    live_state = data_fabric.get_live_state()
-    risk_scores = engine.calculate_risk_scores(live_state)
-    all_incidents = [inc for zone_data in live_state.values() for inc in zone_data.get('active_incidents', [])]
-    
-    # Map incident IDs to the incident data for easy lookup
+    if 'engine' not in st.session_state:
+        config = load_config(CONFIG_FILE); st.session_state.engine = CognitiveEngine(DataFusionFabric(config))
+    engine = st.session_state.engine; data_fabric = engine.data_fabric
+    live_state = data_fabric.get_live_state(); risk_scores = engine.calculate_risk_scores(live_state); all_incidents = [inc for zone_data in live_state.values() for inc in zone_data.get('active_incidents', [])]
     incident_dict = {i['id']: i for i in all_incidents}
 
-    # ##################################################################
-    # ###############     ROBUST CALLBACK-BASED LOGIC      ###############
-    # ##################################################################
     def handle_incident_selection():
-        """This function is called when the user selects an incident from the dropdown."""
-        selected_id = st.session_state.incident_selector # Get the selected ID
-        if selected_id:
-            # If an ID is selected, find the incident and calculate the route
-            st.session_state.selected_incident = incident_dict.get(selected_id)
-            st.session_state.route_info = engine.find_best_route_for_incident(
-                st.session_state.selected_incident, risk_scores
-            )
+        selected_id = st.session_state.get("incident_selector")
+        if selected_id and incident_dict.get(selected_id):
+            st.session_state.selected_incident = incident_dict[selected_id]
+            st.session_state.route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, risk_scores)
         else:
-            # If the user deselects (chooses placeholder), clear the info
-            st.session_state.selected_incident = None
-            st.session_state.route_info = None
+            st.session_state.selected_incident = None; st.session_state.route_info = None
 
     with st.sidebar:
         st.title("RedShield AI"); st.write("Tijuana Emergency Intelligence"); tab_choice = st.radio("Navigation", ["Live Operations", "System Analytics", "Strategic Simulation"], label_visibility="collapsed"); st.divider();
-        if st.button("🔄 Force Refresh Live Data", use_container_width=True): data_fabric.get_live_state.clear(); st.rerun()
-        st.info("Select an incident from the dropdown in the right panel to generate a dispatch plan.")
+        if st.button("🔄 Force Refresh Live Data", use_container_width=True): 
+            data_fabric.get_live_state.clear(); st.session_state.selected_incident = None; st.session_state.route_info = None
+            if "incident_selector" in st.session_state: st.session_state.incident_selector = None
+            st.rerun()
+        st.info("Select an incident from the dropdown in the right panel.")
         
     if tab_choice == "Live Operations":
         kpi_cols = st.columns(3); available_units = sum(1 for v in data_fabric.ambulances.values() if v.get('status') == 'Available'); avg_load = np.mean([_safe_division(h.get('load',0),h.get('capacity',1)) for h in data_fabric.hospitals.values()]);
         with kpi_cols[0]: kpi_card("🚑", "Units Available", f"{available_units}/{len(data_fabric.ambulances)}", "#00A9FF")
         with kpi_cols[1]: kpi_card("🏥", "Avg. Hospital Load", f"{avg_load:.0%}", "#FFB000")
         with kpi_cols[2]: kpi_card("🚨", "Active Incidents", len(all_incidents), "#DC3545")
-        st.divider(); map_col, ticket_col = st.columns((2.5, 1.5))
+        
+        with st.expander("What do these KPIs mean?"):
+            st.markdown("""
+            - **<font color='#00A9FF'>Units Available:</font>** Shows the number of ambulances ready for dispatch. A low number indicates high operational tempo or resource strain.
+            - **<font color='#FFB000'>Avg. Hospital Load:</font>** The average capacity across all hospitals. A high percentage suggests the entire system is under stress, and diversions may be necessary.
+            - **<font color='#DC3545'>Active Incidents:</font>** The current number of unresolved emergencies in the city.
+            """, unsafe_allow_html=True)
+        st.divider()
+
+        map_col, ticket_col = st.columns((2.5, 1.5))
         
         with ticket_col:
             st.subheader("Dispatch Ticket")
-            
-            # Use st.selectbox with the on_change callback for reliable state handling.
             st.selectbox(
-                "Select an Active Incident:",
-                options=[None] + list(incident_dict.keys()), # Add None for a placeholder
+                "Select an Active Incident:", options=[None] + sorted(list(incident_dict.keys())),
                 format_func=lambda x: "Choose an incident..." if x is None else f"{x} (Priority {incident_dict[x]['priority']})",
-                key="incident_selector", # The key that links to st.session_state
-                on_change=handle_incident_selection,
+                key="incident_selector", on_change=handle_incident_selection,
             )
-
-            # The rest of the UI is now declarative: it just displays what's in the state.
             if st.session_state.get('selected_incident'):
                 if st.session_state.get('route_info') and "error" not in st.session_state.route_info:
                     st.metric("Responding to Incident", st.session_state.selected_incident.get('id', 'N/A'))
@@ -223,34 +211,67 @@ def main():
                 st.info("Select an incident from the dropdown above to generate a dispatch plan.")
         
         with map_col:
+            st.subheader("City Operations Map")
+            with st.expander("Show Map Legend", expanded=True):
+                st.markdown("""
+                **Icons:**
+                - 🚑 **Ambulance (Large, Bright):** Available for dispatch.
+                - 🚑 **Ambulance (Small, Gray):** Currently on a mission.
+                - 🏥 **Hospital (Green <70%):** Accepting patients, low load.
+                - 🏥 **Hospital (Orange <90%):** High load, use caution.
+                - 🏥 **Hospital (Red >=90%):** Critical load, avoid if possible.
+                - 🚨 **Pulsing Circle:** Location of an active emergency.
+                
+                **Zone Analysis:**
+                - **Color (Red Intensity):** Heatmap of incident density. More intense red means more incidents in that area.
+                - **Elevation (Height):** Composite risk score from traffic, crime, and road quality. Taller zones are riskier to travel through.
+                """)
             zones_gdf, hosp_df, amb_df, inc_df, heat_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, config.get('styling', {}))
             deck = create_deck_gl_map(zones_gdf, hosp_df, amb_df, inc_df, heat_df, st.session_state.get('route_info'), config.get('styling', {}))
             st.pydeck_chart(deck, use_container_width=True)
 
-    # ... (Rest of the app is unchanged) ...
     elif tab_choice == "System Analytics":
-        st.header("System-Wide Analytics & AI Insights"); forecast_col, feature_col = st.columns(2)
+        st.header("System-Wide Analytics & AI Insights")
+        forecast_col, feature_col = st.columns(2)
         with forecast_col:
-            st.subheader("24-Hour Probabilistic Demand Forecast");
+            st.subheader("24-Hour Probabilistic Demand Forecast")
+            st.info("""
+            **What it shows:** The AI's prediction for the total number of emergency calls city-wide for the next 24 hours.
+            - The **solid line** is the most likely number of calls.
+            - The **shaded area** represents the 95% confidence interval—the likely range of calls.
+            
+            **How to use it:** A high predicted demand may warrant calling in additional staff or pre-positioning units in expected hotspots.
+            """)
             with st.spinner("Calculating 24-hour forecast..."):
                 future_hours = pd.date_range(start=datetime.now(), periods=24, freq='h'); forecast_data = []
                 for ts in future_hours:
                     features = {"hour": ts.hour, "day_of_week": ts.weekday(), "is_quincena": ts.day in [14,15,16,29,30,31,1], 'temperature': 22, 'border_wait': 75}; mean_pred = engine.predict_citywide_demand(features); std_dev = mean_pred * 0.10; forecast_data.append({'time': ts, 'Predicted Calls': mean_pred, 'Upper Bound': mean_pred + 1.96 * std_dev, 'Lower Bound': np.maximum(0, mean_pred - 1.96 * std_dev)})
                 st.area_chart(pd.DataFrame(forecast_data).set_index('time'))
         with feature_col:
-            st.subheader("Demand Model: Feature Importance (XAI)"); st.info("This chart shows which factors have the biggest impact on our call demand forecast. It's the 'why' behind the AI's prediction."); feature_importance = pd.DataFrame({'feature': engine.model_features, 'importance': engine.demand_model.feature_importances_}).sort_values('importance', ascending=True); st.bar_chart(feature_importance.set_index('feature'))
+            st.subheader("Demand Model: Feature Importance (XAI)")
+            st.info("""
+            **What it shows:** The factors that are most influential on our call demand forecast *right now*. A higher bar means that factor has a bigger impact.
+            
+            **How to use it:** This explains the 'why' behind the forecast. If `border_wait` is high on the chart, it tells you that border traffic is a primary driver of call volume today, which can inform strategic decisions.
+            """)
+            feature_importance = pd.DataFrame({'feature': engine.model_features, 'importance': engine.demand_model.feature_importances_}).sort_values('importance', ascending=True); st.bar_chart(feature_importance.set_index('feature'))
         st.divider(); col1, col2 = st.columns(2)
         with col1:
-            st.subheader("Hospital Load Status")
+            st.subheader("Hospital Load Status"); st.markdown("Real-time capacity of all receiving hospitals.")
             for name, data in data_fabric.hospitals.items():
                 load_pct = _safe_division(data['load'], data['capacity']); st.markdown(f"**{name}** ({data['load']}/{data['capacity']})"); st.progress(load_pct)
         with col2:
-            st.subheader("Critical Patient Alerts"); patient_alerts = engine.get_patient_alerts()
+            st.subheader("Critical Patient Alerts"); st.markdown("Patients with critical vital signs from remote monitoring.")
+            patient_alerts = engine.get_patient_alerts()
             if not patient_alerts: st.success("✅ No critical patient alerts at this time.")
             else:
                 for alert in patient_alerts: st.error(f"**Patient {alert.get('Patient ID')}:** HR: {alert.get('Heart Rate')}, O2: {alert.get('Oxygen %')}% | Unit: {alert.get('Ambulance')}", icon="❤️‍🩹")
     elif tab_choice == "Strategic Simulation":
-        st.header("Strategic Simulation & 'What-If' Analysis"); st.info("Test system resilience by simulating extreme conditions."); sim_traffic_spike = st.slider("Simulate City-Wide Traffic Multiplier", 1.0, 5.0, 1.0, 0.25); st.warning("Running a simulation will use the current live incident map. A high number of incidents combined with a high traffic multiplier will show significant risk increases.")
+        st.header("Strategic Simulation & 'What-If' Analysis")
+        st.info("""
+        This tool lets you test system resilience under extreme conditions. By increasing the traffic multiplier, you can simulate events like rush hour, holidays, or major road closures to see how they impact zonal risk.
+        """)
+        sim_traffic_spike = st.slider("Simulate City-Wide Traffic Multiplier", 1.0, 5.0, 1.0, 0.25)
         if st.button("Run Simulation", use_container_width=True):
             sim_risk_scores = {};
             for zone, s_data in data_fabric.zones.items():
