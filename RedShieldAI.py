@@ -1,6 +1,6 @@
-# RedShieldAI_Definitive_Command_Center.py
-# SME LEVEL: The definitive, fully integrated and operational version with high-impact visualizations,
-# guaranteed map rendering, and robust, defensive code.
+# RedShieldAI_Elite_Command_Center.py
+# SME LEVEL: The definitive, UX/DX-focused version with a fully interactive map,
+# external configuration, and unparalleled visual clarity.
 
 import streamlit as st
 import pandas as pd
@@ -9,31 +9,32 @@ import geopandas as gpd
 from shapely.geometry import Point, Polygon, LineString
 import pydeck as pdk
 from sklearn.ensemble import RandomForestRegressor
-from datetime import datetime, timedelta
-from typing import Dict, List, Any
+from datetime import datetime
+from typing import Dict, Any, Tuple
+import yaml
+
+# --- L0: CONFIGURATION & UTILITIES ---
+@st.cache_data
+def load_config(path='config.yaml'):
+    with open(path, 'r') as f:
+        return yaml.safe_load(f)
+
+def _safe_division(n, d): return n / d if d else 0
 
 # --- L1: DATA & MODELING LAYER ---
 class DataFusionFabric:
-    """Manages all static and dynamic data for the city with enhanced attributes."""
-    def __init__(self):
-        self.static_zonal_data = {
-            "Zona Río": {"polygon": Polygon([(32.52, -117.01), (32.53, -117.01), (32.53, -117.03), (32.52, -117.03)]), "crime": 0.7, "road_quality": 0.9},
-            "Otay": {"polygon": Polygon([(32.53, -116.95), (32.54, -116.95), (32.54, -116.98), (32.53, -116.98)]), "crime": 0.5, "road_quality": 0.7},
-            "Playas": {"polygon": Polygon([(32.51, -117.11), (32.53, -117.11), (32.53, -117.13), (32.51, -117.13)]), "crime": 0.4, "road_quality": 0.8}
-        }
-        self.hospitals = { "Hospital General": {"location": Point(32.5295, -117.0182), "capacity": 100, "load": 85}, "IMSS Clínica 1": {"location": Point(32.5121, -117.0145), "capacity": 120, "load": 70}, "Hospital Angeles": {"location": Point(32.5300, -117.0200), "capacity": 100, "load": 95}}
-        self.ambulances = { "A01": {"location": Point(32.515, -117.04), "status": "Available"}, "A02": {"location": Point(32.535, -116.96), "status": "Available"}, "A03": {"location": Point(32.52, -117.12), "status": "On Mission"}}
-        self.patient_vitals = { "P001": {'heart_rate': 145, 'oxygen': 88}, "P002": {'heart_rate': 90, 'oxygen': 97}, "P003": {'heart_rate': 150, 'oxygen': 99}}
+    """Manages all static and dynamic data for the city."""
+    def __init__(self, config: Dict):
+        self.config = config['data']
+        self.hospitals = {name: {'location': Point(data['location']), 'capacity': data['capacity'], 'load': data['load']} for name, data in self.config['hospitals'].items()}
+        self.ambulances = {name: {'location': Point(data['location']), 'status': data['status']} for name, data in self.config['ambulances'].items()}
+        self.zones = {name: {**data, 'polygon': Polygon(data['polygon'])} for name, data in self.config['zones'].items()}
 
     @st.cache_data(ttl=60)
     def get_live_state(_self) -> Dict:
-        """Simulates fetching real-time data with guaranteed structure."""
         state = {}
-        for zone, data in _self.static_zonal_data.items():
-            incidents = []
-            for i in range(np.random.randint(0, 4)):
-                minx, miny, maxx, maxy = data['polygon'].bounds
-                incidents.append({"id": f"I-{zone[:2]}{i}", "location": Point(np.random.uniform(minx, maxx), np.random.uniform(miny, maxy)), "priority": np.random.choice([1,2,3], p=[0.6, 0.3, 0.1])})
+        for zone, data in _self.zones.items():
+            incidents = [{"id": f"I-{zone[:2]}{i}", "location": Point(np.random.uniform(minx, maxx), np.random.uniform(miny, maxy)), "priority": np.random.choice([1,2,3], p=[0.6, 0.3, 0.1])} for i in range(np.random.randint(0, 4)) for minx, miny, maxx, maxy in [data['polygon'].bounds]]
             state[zone] = {"traffic": np.random.uniform(0.3, 1.0), "active_incidents": incidents}
         return state
 
@@ -41,33 +42,13 @@ class CognitiveEngine:
     """The 'brain' of the system, with enhanced analysis."""
     def __init__(self, data_fabric: DataFusionFabric):
         self.data_fabric = data_fabric
-        self.demand_model = self._get_demand_model()
-
-    @st.cache_resource
-    def _get_demand_model(_self):
-        hours = 24 * 90; timestamps = pd.to_datetime(pd.date_range(start='2024-01-01', periods=hours, freq='H'))
-        X_train = pd.DataFrame({'hour': timestamps.hour, 'day_of_week': timestamps.dayofweek, 'is_quincena': timestamps.day.isin([14,15,16,29,30,31,1]), 'temperature': np.random.normal(22, 5, hours), 'border_wait': np.random.randint(20, 120, hours)})
-        y_train = np.maximum(0, 5 + 3 * np.sin(X_train['hour'] * 2 * np.pi / 24) + X_train['is_quincena'] * 5 + X_train['border_wait']/20 + np.random.randn(hours)).astype(int)
-        model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1); model.fit(X_train, y_train)
-        return model, list(X_train.columns)
-
-    def predict_citywide_demand(self, features: Dict) -> float:
-        model, feature_names = self.demand_model; input_df = pd.DataFrame([features], columns=feature_names)
-        return max(0, model.predict(input_df)[0])
-
+    
     def calculate_risk_scores(self, live_state: Dict) -> Dict:
         risk_scores = {};
-        for zone, s_data in self.data_fabric.static_zonal_data.items():
+        for zone, s_data in self.data_fabric.zones.items():
             l_data = live_state.get(zone, {}); risk = (l_data.get('traffic', 0.5)*0.6 + (1 - s_data.get('road_quality', 0.5))*0.2 + s_data.get('crime', 0.5)*0.2)
             risk_scores[zone] = risk * (1 + len(l_data.get('active_incidents', [])))
         return risk_scores
-
-    def get_patient_alerts(self) -> List[Dict]:
-        alerts = []; 
-        for pid, vitals in self.data_fabric.patient_vitals.items():
-            if vitals.get('heart_rate', 100) > 140 or vitals.get('oxygen', 100) < 90:
-                alerts.append({"Patient ID": pid, "Heart Rate": vitals.get('heart_rate'), "Oxygen %": vitals.get('oxygen')})
-        return alerts
 
     def find_best_route_for_incident(self, incident: Dict, risk_gdf: gpd.GeoDataFrame) -> Dict:
         available_ambulances = {k: v for k, v in self.data_fabric.ambulances.items() if v.get('status') == 'Available'}
@@ -88,105 +69,103 @@ class CognitiveEngine:
         best_option = min(options, key=lambda x: x.get('total_score', float('inf')))
         return {"ambulance_unit": ambulance_unit, "ambulance_location": amb_loc, "incident_location": incident_location, "best_hospital": best_option.get('hospital'), "hospital_location": self.data_fabric.hospitals.get(best_option.get('hospital'), {}).get('location'), "routing_analysis": pd.DataFrame(options).sort_values('total_score').reset_index(drop=True)}
 
-# --- L3: HIGH-IMPACT VISUALIZATION & UI ---
-def _safe_division(n, d): return n / d if d else 0
-
-def create_gauge(value: float, label: str, max_val: int = 100) -> str:
-    percent = min(1.0, _safe_division(value, max_val)); angle = percent * 180
-    x_outer = 80 - 70 * np.cos(np.deg2rad(angle-90)); y_outer = 75 - 70 * np.sin(np.deg2rad(angle-90))
-    large_arc_flag = 1 if angle > 180 else 0 # This flag is technically not needed for a 180-degree arc but is good practice.
-    return f"""<div style="text-align: center;">
-        <svg height="95" width="160">
-            <defs><linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#28a745" /><stop offset="70%" stop-color="#ffc107" /><stop offset="90%" stop-color="#dc3545" /></linearGradient>
-            <filter id="text-shadow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="1 1" result="shadow"/><feOffset dx="0" dy="0" /></filter></defs>
-            <path d="M 10 75 A 65 65 0 0 1 150 75" stroke="#333" stroke-width="20" fill="none" />
-            <path d="M 10 75 A 65 65 0 {large_arc_flag} 1 {x_outer} {y_outer}" stroke="url(#grad1)" stroke-width="20" fill="none" />
-            <text x="80" y="70" text-anchor="middle" font-size="28" fill="#eee" font-weight="bold" filter="url(#text-shadow)">{int(value)}{'%' if max_val == 100 else ''}</text>
-        </svg>
-        <div style="font-size: 14px; font-weight: bold; color: #ccc;">{label}</div>
-    </div>"""
-
-def create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, route_info=None):
-    CARTO_DARK_MATTER_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+# --- L2: PRESENTATION & VISUALIZATION LAYER ---
+def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_config):
+    """DX ENHANCEMENT: Encapsulates all data-to-dataframe logic for clean, readable code."""
+    def get_hospital_color(load, capacity):
+        load_pct = _safe_division(load, capacity)
+        if load_pct < 0.7: return style_config['hospital_ok']
+        if load_pct < 0.9: return style_config['hospital_warn']
+        return style_config['hospital_crit']
     
+    hospital_df = pd.DataFrame([{"name": f"Hospital: {n}", "tooltip_text": f"Load: {d.get('load',0)}/{d.get('capacity',1)} ({_safe_division(d.get('load',0), d.get('capacity',1)):.0%})", "lon": d.get('location', Point(0,0)).x, "lat": d.get('location', Point(0,0)).y, "color": get_hospital_color(d.get('load',0), d.get('capacity',1))} for n, d in data_fabric.hospitals.items()])
+    ambulance_df = pd.DataFrame([{"name": f"Unit: {n}", "tooltip_text": f"Status: {d.get('status', 'Unknown')}", "lon": d.get('location', Point(0,0)).x, "lat": d.get('location', Point(0,0)).y, "size": style_config['ambulance_available'] if d.get('status') == 'Available' else style_config['ambulance_mission'], "color": style_config['available'] if d.get('status') == 'Available' else style_config['on_mission']} for n, d in data_fabric.ambulances.items()])
+    incident_df = pd.DataFrame([{"name": f"Incident: {i.get('id', 'N/A')}", "tooltip_text": f"Priority: {i.get('priority', 1)}", "lon": i.get('location', Point(0,0)).x, "lat": i.get('location', Point(0,0)).y, "id": i.get('id'), "size": style_config['incident_base'] + i.get('priority', 1)**2} for i in all_incidents])
+    
+    zones_gdf = gpd.GeoDataFrame.from_dict(data_fabric.zones, orient='index').set_geometry('polygon')
+    zones_gdf['name'] = zones_gdf.index; zones_gdf['risk'] = zones_gdf.index.map(risk_scores).fillna(0); zones_gdf['tooltip_text'] = ""
+    max_risk = max(1, zones_gdf['risk'].max()); zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [255, int(255*(1-_safe_division(r,max_risk))), 0, 140]).tolist()
+    
+    return zones_gdf, hospital_df, ambulance_df, incident_df
+
+def create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, route_info=None, style_config=None):
+    """Creates a rich, multi-layered, 3D PyDeck map."""
     zone_layer = pdk.Layer("PolygonLayer", data=zones_gdf, get_polygon="geometry", filled=True, stroked=False, extruded=True, get_elevation="risk * 2000", get_fill_color="fill_color", opacity=0.15, pickable=True)
-    
-    hospital_layer = pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=4, get_color='color', size_scale=15, pickable=True)
+    hospital_layer = pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style_config['hospital'], get_color='color', size_scale=15, pickable=True)
     ambulance_layer = pdk.Layer("IconLayer", data=ambulance_df, get_icon="icon_data", get_position='[lon, lat]', get_size='size', get_color='color', size_scale=15, pickable=True)
-    incident_layer = pdk.Layer("ScatterplotLayer", data=incident_df, get_position='[lon, lat]', get_radius='size*20', get_fill_color=[255, 80, 80, 255], pickable=True, radius_min_pixels=5, stroked=True, get_line_width=100, get_line_color=[255, 80, 80, 100])
-    
+    incident_layer = pdk.Layer("ScatterplotLayer", data=incident_df, get_position='[lon, lat]', get_radius='size*20', get_fill_color=style_config['incident_halo'], pickable=True, radius_min_pixels=5, stroked=True, get_line_width=100, get_line_color=[*style_config['incident_halo'], 100])
     layers = [zone_layer, hospital_layer, ambulance_layer, incident_layer]
-    
     if route_info and "error" not in route_info:
         route_path = LineString([route_info['ambulance_location'], route_info['hospital_location']])
         route_df = pd.DataFrame([{'path': [list(p) for p in route_path.coords]}])
-        layers.append(pdk.Layer('PathLayer', data=route_df, get_path='path', get_width=5, get_color=[251, 192, 45], width_scale=1, width_min_pixels=5))
-        
+        layers.append(pdk.Layer('PathLayer', data=route_df, get_path='path', get_width=5, get_color=style_config['route_path'], width_scale=1, width_min_pixels=5))
     view_state = pdk.ViewState(latitude=32.525, longitude=-117.02, zoom=11.5, bearing=0, pitch=50)
     tooltip = {"html": "<b>{name}</b><br/>{tooltip_text}", "style": {"backgroundColor": "#333", "color": "white", "border-radius": "5px", "padding": "5px"}}
-    return pdk.Deck(layers=layers, initial_view_state=view_state, map_style=CARTO_DARK_MATTER_STYLE, tooltip=tooltip)
+    return pdk.Deck(layers=layers, initial_view_state=view_state, map_style="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json", tooltip=tooltip)
 
 def display_ai_rationale(route_info: Dict):
     st.subheader("AI Dispatch Rationale"); best = route_info['routing_analysis'].iloc[0]
-    st.success(f"**Recommended:** `{best.get('hospital', 'N/A')}`")
-    st.markdown(f"✅ **Lowest Composite Score:** `{best.get('total_score', 0):.1f}`\n✅ **Acceptable ETA & Path Risk**\n✅ **Manageable Hospital Load:** `{best.get('load_pct', 0):.0%}`")
+    st.success(f"**Recommended:** `{best.get('hospital', 'N/A')}`", icon="✅")
+    st.markdown(f"**Reason:** Lowest composite score (`{best.get('total_score', 0):.1f}`). Achieves the best balance of fast ETA, low-risk travel path, and manageable hospital load.")
     if len(route_info['routing_analysis']) > 1:
-        rejected = route_info['routing_analysis'].iloc[1]; st.error(f"**Alternative Rejected:** `{rejected.get('hospital', 'N/A')}`")
+        rejected = route_info['routing_analysis'].iloc[1]; st.error(f"**Alternative Rejected:** `{rejected.get('hospital', 'N/A')}`", icon="❌")
         reasons = []
         if rejected.get('load_penalty', 0) > best.get('load_penalty', 0) * 1.2: reasons.append(f"high hospital load (`{rejected.get('load_pct', 0):.0%}`)")
         if rejected.get('path_risk_cost', 0) > best.get('path_risk_cost', 0) * 1.2: reasons.append("a high-risk travel path")
         if not reasons: reasons.append("it was a close second but less optimal overall.")
         st.markdown(f"Rejected primarily due to {', '.join(reasons)}.")
 
-# --- MAIN APPLICATION ---
+# --- L4: MAIN APPLICATION ---
 def main():
     st.set_page_config(page_title="RedShield AI: Elite Command", layout="wide", initial_sidebar_state="expanded")
-    st.markdown("""<style> .block-container { padding-top: 1rem; } </style>""", unsafe_allow_html=True)
+    st.markdown("""<style> .block-container { padding-top: 1rem; } [data-testid="stSidebar"] {background-color: #111;} </style>""", unsafe_allow_html=True)
 
-    if 'data_fabric' not in st.session_state: st.session_state.data_fabric = DataFusionFabric()
+    config = load_config()
+    if 'data_fabric' not in st.session_state: st.session_state.data_fabric = DataFusionFabric(config)
     if 'cognitive_engine' not in st.session_state: st.session_state.cognitive_engine = CognitiveEngine(st.session_state.data_fabric)
     data_fabric, engine = st.session_state.data_fabric, st.session_state.cognitive_engine
 
-    live_state = data_fabric.get_live_state()
-    risk_scores = engine.calculate_risk_scores(live_state)
-    all_incidents = [inc for zone_data in live_state.values() for inc in zone_data.get('active_incidents', [])]
-
-    st.header("RedShield AI: Elite Command Center")
-    kpi1, kpi2, kpi3 = st.columns(3)
-    available_units = sum(1 for v in data_fabric.ambulances.values() if v.get('status') == 'Available')
-    kpi1.markdown(create_gauge(available_units, "Units Available", max_val=len(data_fabric.ambulances)), unsafe_allow_html=True)
-    avg_load = np.mean([_safe_division(h.get('load',0),h.get('capacity',1)) for h in data_fabric.hospitals.values()]) * 100
-    kpi2.markdown(create_gauge(avg_load, "Avg. Hospital Load"), unsafe_allow_html=True)
-    kpi3.markdown(create_gauge(len(engine.get_patient_alerts()), "Critical Patients", max_val=5), unsafe_allow_html=True)
-    st.divider()
-
-    col1, col2 = st.columns((2.5, 1.5))
-    with col1:
-        # --- Defensive Data Preparation for Visualization ---
-        def get_hospital_color(load, capacity): load_pct = _safe_division(load, capacity); return [0, 255, 0, 255] if load_pct < 0.7 else ([255, 191, 0, 255] if load_pct < 0.9 else [255, 0, 0, 255])
-        hospital_df = pd.DataFrame([{"name": f"Hospital: {n}", "tooltip_text": f"Load: {d.get('load',0)}/{d.get('capacity',1)} ({_safe_division(d.get('load',0), d.get('capacity',1)):.0%})", "lon": d.get('location', Point(0,0)).x, "lat": d.get('location', Point(0,0)).y, "icon_data": {"url": "https://img.icons8.com/plasticine/100/hospital-3.png", "width": 128, "height": 128, "anchorY": 128}, "color": get_hospital_color(d.get('load',0), d.get('capacity',1))} for n, d in data_fabric.hospitals.items()])
-        ambulance_df = pd.DataFrame([{"name": f"Unit: {n}", "tooltip_text": f"Status: {d.get('status', 'Unknown')}", "lon": d.get('location', Point(0,0)).x, "lat": d.get('location', Point(0,0)).y, "icon_data": {"url": "https://img.icons8.com/plasticine/100/ambulance.png", "width": 128, "height": 128, "anchorY": 128}, "size": 4 if d.get('status') == 'Available' else 2.5, "color": [0, 255, 0, 255] if d.get('status') == 'Available' else [128, 128, 128, 180]} for n, d in data_fabric.ambulances.items()])
-        incident_df = pd.DataFrame([{"name": f"Incident: {i.get('id', 'N/A')}", "tooltip_text": f"Priority: {i.get('priority', 1)}", "lon": i.get('location', Point(0,0)).x, "lat": i.get('location', Point(0,0)).y, "size": 5 + i.get('priority', 1)**2} for i in all_incidents])
-        zones_gdf = gpd.GeoDataFrame.from_dict(data_fabric.static_zonal_data, orient='index').set_geometry('polygon'); zones_gdf['name'] = zones_gdf.index; zones_gdf['risk'] = zones_gdf.index.map(risk_scores).fillna(0); zones_gdf['tooltip_text'] = ""
-        max_risk = max(1, zones_gdf['risk'].max()); zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [255, int(255*(1-_safe_division(r,max_risk))), 0, 140]).tolist()
-        
-        route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, zones_gdf) if st.session_state.get('selected_incident') else None
-        st.pydeck_chart(create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, route_info))
-
-    with col2:
-        st.subheader("Incident Queue")
-        if not all_incidents: st.info("No active incidents. System is clear.")
+    with st.sidebar:
+        st.title("RedShield AI")
+        st.header("Master Controls")
+        if st.button("🔄 Force Refresh Live Data", use_container_width=True): data_fabric.get_live_state.clear()
+        st.header("Incident Queue")
+        live_state = data_fabric.get_live_state()
+        all_incidents = [inc for zone_data in live_state.values() for inc in zone_data.get('active_incidents', [])]
+        if not all_incidents: st.info("No active incidents.")
         else:
             for incident in sorted(all_incidents, key=lambda x: x.get('priority', 1), reverse=True):
                 if st.button(f"🚨 Priority {incident.get('priority', 1)}: Incident {incident.get('id', 'N/A')}", key=incident.get('id'), use_container_width=True, type="primary" if incident.get('priority') == 3 else "secondary"):
-                    st.session_state.selected_incident = incident; st.rerun()
-        st.divider()
+                    st.session_state.selected_incident = incident
+    
+    risk_scores = engine.calculate_risk_scores(live_state)
+    
+    # --- TOP KPI DASHBOARD ---
+    kpi_cols = st.columns(3)
+    available_units = sum(1 for v in data_fabric.ambulances.values() if v.get('status') == 'Available')
+    kpi_cols[0].markdown(create_gauge(available_units, "Units Available", max_val=len(data_fabric.ambulances)), unsafe_allow_html=True)
+    avg_load = np.mean([_safe_division(h.get('load',0),h.get('capacity',1)) for h in data_fabric.hospitals.values()]) * 100
+    kpi_cols[1].markdown(create_gauge(avg_load, "Avg. Hospital Load"), unsafe_allow_html=True)
+    kpi_cols[2].markdown(create_gauge(len(engine.get_patient_alerts()), "Critical Patients", max_val=5), unsafe_allow_html=True)
+    st.divider()
+
+    # --- MAIN LAYOUT: MAP + DISPATCH TICKET ---
+    map_col, ticket_col = st.columns((2.5, 1.5))
+    with map_col:
+        zones_gdf, hospital_df, ambulance_df, incident_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, config['styling'])
+        route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, zones_gdf) if st.session_state.get('selected_incident') else None
+        st.pydeck_chart(create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, route_info, config['styling']))
+
+    with ticket_col:
         st.subheader("Dispatch Ticket")
-        if not st.session_state.get('selected_incident'): st.info("Select an incident to generate a dispatch plan.")
+        if not st.session_state.get('selected_incident'): st.info("Select an incident from the queue to generate a dispatch plan.")
         elif not route_info or "error" in route_info: st.error(route_info.get("error", "Could not calculate a route."))
         else:
+            st.metric("Responding to Incident", st.session_state.selected_incident.get('id', 'N/A'))
             display_ai_rationale(route_info)
             with st.expander("Show Detailed Routing Analysis"): st.dataframe(route_info['routing_analysis'].set_index('hospital'))
 
+if __name__ == "__main__":
+    main()
 if __name__ == "__main__":
     main()
