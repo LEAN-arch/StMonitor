@@ -2,7 +2,7 @@ data:
   hospitals:
     "Hospital General": { location: [32.5295, -117.0182], capacity: 100, load: 85 }
     "IMSS Clínica 1": { location: [32.5121, -117.0145], capacity: 120, load: 70 }
-    "Hospital Angeles": { location: [32.5300, -117.0200], capacity: 100, load: 95 }
+    "Hospital CRM": { location: [32.5300, -117.0200], capacity: 60, load: 95 }
   ambulances:
     "A01": { location: [32.515, -117.04], status: "Available" }
     "A02": { location: [32.535, -116.96], status: "Available" }
