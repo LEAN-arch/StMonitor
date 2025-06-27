@@ -11,9 +11,21 @@ data:
     "Zona Río": { polygon: [[32.52, -117.01], [32.53, -117.01], [32.53, -117.03], [32.52, -117.03]], crime: 0.7, road_quality: 0.9 }
     "Otay": { polygon: [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]], crime: 0.5, road_quality: 0.7 }
     "Playas": { polygon: [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]], crime: 0.4, road_quality: 0.8 }
+
 styling:
-  colors: {available: [0, 255, 127, 255], on_mission: [128, 128, 128, 180], hospital_ok: [0, 255, 127], hospital_warn: [255, 191, 0], hospital_crit: [255, 0, 0], incident_halo: [255, 80, 80], route_path: [251, 192, 45]}
-  sizes: {ambulance_available: 4.5, ambulance_mission: 2.5, hospital: 4.0, incident_base: 5.0}
+  colors:
+    available: [0, 179, 89, 255]      # Strong Green
+    on_mission: [150, 150, 150, 180]    # Grey
+    hospital_ok: [0, 179, 89]        # Green
+    hospital_warn: [255, 191, 0]     # Yellow
+    hospital_crit: [220, 53, 69]      # Red
+    incident_halo: [220, 53, 69]      # Red
+    route_path: [0, 123, 255]         # Blue
+  sizes:
+    ambulance_available: 4.5
+    ambulance_mission: 2.5
+    hospital: 4.0
+    incident_base: 5.0
   icons:
-    hospital: "https://img.icons8.com/plasticine/100/hospital-3.png"
-    ambulance: "https://img.icons8.com/plasticine/100/ambulance.png"
+    hospital: "https://img.icons8.com/color/96/hospital-3.png"
+    ambulance: "https://img.icons8.com/color/96/ambulance.png"
