@@ -1,6 +1,6 @@
-# RedShieldAI_Definitive_Command_Center.py
-# SME LEVEL: The final, fully integrated version with high-quality visualizations,
-# 3D maps, probabilistic plots, and robust deployment configuration.
+# RedShieldAI_Definitive_Command_Center_OSS_MAP.py
+# SME LEVEL: The definitive, fully integrated version with high-quality visualizations,
+# 3D maps, probabilistic plots, and a robust, open-source CARTO map provider.
 
 import streamlit as st
 import pandas as pd
@@ -103,13 +103,11 @@ class CognitiveEngine:
 
 # --- L3: HIGH-QUALITY VISUALIZATION & UI ---
 def create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, route_info=None):
-    """Creates a rich, multi-layered, 3D PyDeck map."""
-    # SME ENHANCEMENT: Using secrets for the API key is the correct, secure way to render maps.
-    if 'MAPBOX_API_KEY' not in st.secrets:
-        st.error("Mapbox API Key not found. Please add it to your Streamlit secrets.")
-        return None
+    """Creates a rich, multi-layered, 3D PyDeck map with an open-source base map."""
+    # SME FIX: Switched to a key-less open-source map provider (CARTO) to ensure rendering.
+    # The map_provider and api_keys arguments are no longer needed.
+    CARTO_DARK_MATTER_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
     
-    # SME ENHANCEMENT: 3D extrusion and enhanced HTML tooltips for superior visualization.
     zone_layer = pdk.Layer(
         "PolygonLayer",
         data=zones_gdf,
@@ -117,7 +115,7 @@ def create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, route_
         filled=True,
         stroked=True,
         extruded=True,
-        get_elevation="risk * 2000", # Risk score drives the height of the zone
+        get_elevation="risk * 2000",
         get_fill_color="fill_color",
         get_line_color=[255, 255, 255],
         get_line_width=50,
@@ -126,16 +124,16 @@ def create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, route_
         auto_highlight=True,
     )
     
-    # Generic icon layer setup
-    def create_icon_layer(data, icon_name):
-        ICON_URL = f"https://raw.githubusercontent.com/ajduberstein/geo_datasets/master/data/{icon_name}.png"
+    def create_icon_layer(data, icon_url):
+        data['icon_data'] = [{"url": icon_url, "width": 128, "height": 128, "anchorY": 128}] * len(data)
         return pdk.Layer("IconLayer", data=data, get_icon="icon_data", get_position='[lon, lat]', get_size=4, size_scale=15, pickable=True)
 
-    hospital_df['icon_data'] = [{"url": "https://img.icons8.com/color/48/hospital-3.png", "width": 128, "height": 128, "anchorY": 128}] * len(hospital_df)
-    ambulance_df['icon_data'] = [{"url": "https://img.icons8.com/officel/48/ambulance.png", "width": 128, "height": 128, "anchorY": 128}] * len(ambulance_df)
-    incident_df['icon_data'] = [{"url": "https://img.icons8.com/fluency/48/siren.png", "width": 128, "height": 128, "anchorY": 128}] * len(incident_df)
-
-    layers = [zone_layer, create_icon_layer(hospital_df, 'hospital'), create_icon_layer(ambulance_df, 'ambulance'), create_icon_layer(incident_df, 'incident')]
+    layers = [
+        zone_layer,
+        create_icon_layer(hospital_df, "https://img.icons8.com/color/48/hospital-3.png"),
+        create_icon_layer(ambulance_df, "https://img.icons8.com/officel/48/ambulance.png"),
+        create_icon_layer(incident_df, "https://img.icons8.com/fluency/48/siren.png")
+    ]
     
     if route_info and "error" not in route_info:
         route_path = LineString([route_info['ambulance_location'], route_info['hospital_location']])
@@ -146,29 +144,19 @@ def create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, route_
     view_state = pdk.ViewState(latitude=32.525, longitude=-117.02, zoom=11.5, bearing=0, pitch=45)
     
     tooltip = {
-        "html": """
-        <b>{name}</b><br/>
-        <b>Risk Score:</b> {risk}<br/>
-        """,
-        "style": {"backgroundColor": "steelblue", "color": "white"}
+        "html": "<b>{name}</b><br/>{tooltip_text}",
+        "style": {"backgroundColor": "#333", "color": "white", "border-radius": "5px", "padding": "5px"}
     }
     
-    return pdk.Deck(layers=layers, initial_view_state=view_state, map_provider='mapbox', map_style=pdk.map_styles.MAPBOX_DARK, api_keys={'mapbox': st.secrets['MAPBOX_API_KEY']}, tooltip=tooltip)
+    return pdk.Deck(layers=layers, initial_view_state=view_state, map_style=CARTO_DARK_MATTER_STYLE, tooltip=tooltip)
 
 def display_hospital_load_bars(hospitals_data):
-    """SME ENHANCEMENT: Creates visual, color-coded progress bars for hospital load."""
     st.subheader("Hospital Load Status")
     for name, data in hospitals_data.items():
         load_pct = data['load'] / data['capacity']
         color = "#28a745" if load_pct < 0.7 else ("#ffc107" if load_pct < 0.9 else "#dc3545")
         st.markdown(f"**{name}**")
-        st.markdown(f"""
-        <div style="background-color: #e9ecef; border-radius: 5px; height: 20px;">
-            <div style="background-color: {color}; width: {load_pct*100:.2f}%; border-radius: 5px; height: 100%; text-align: center; color: white; font-weight: bold;">
-                {load_pct:.0%}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.progress(load_pct)
 
 # --- MAIN APPLICATION ---
 def main():
@@ -199,12 +187,13 @@ def main():
             selected_id = st.sidebar.selectbox("Select Incident:", [inc['id'] for inc in all_incidents])
             st.session_state.selected_incident = next((inc for inc in all_incidents if inc['id'] == selected_id), None)
 
-        hospital_df = pd.DataFrame([{"name": n, "lon": d['location'].x, "lat": d['location'].y} for n, d in data_fabric.hospitals.items()])
-        ambulance_df = pd.DataFrame([{"name": n, "lon": d['location'].x, "lat": d['location'].y} for n, d in data_fabric.ambulances.items()])
-        incident_df = pd.DataFrame([{"name": i['id'], "lon": i['location'].x, "lat": i['location'].y} for i in all_incidents])
+        hospital_df = pd.DataFrame([{"name": f"Hospital: {n}", "tooltip_text": f"Load: {d['load']}/{d['capacity']}", "lon": d['location'].x, "lat": d['location'].y} for n, d in data_fabric.hospitals.items()])
+        ambulance_df = pd.DataFrame([{"name": f"Unit: {n}", "tooltip_text": f"Status: {d['status']}", "lon": d['location'].x, "lat": d['location'].y} for n, d in data_fabric.ambulances.items()])
+        incident_df = pd.DataFrame([{"name": f"Incident: {i['id']}", "tooltip_text": "Click for details", "lon": i['location'].x, "lat": i['location'].y} for i in all_incidents])
         zones_gdf = gpd.GeoDataFrame.from_dict(data_fabric.static_zonal_data, orient='index').set_geometry('polygon')
         zones_gdf['name'] = zones_gdf.index
         zones_gdf['risk'] = zones_gdf.index.map(risk_scores).fillna(0)
+        zones_gdf['tooltip_text'] = "" # Tooltip from DeckGL works on gdf columns
         max_risk = max(1, zones_gdf['risk'].max())
         zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [255, int(255*(1-r/max_risk)), 0, 140]).tolist()
         
@@ -212,11 +201,10 @@ def main():
         with col1:
             st.subheader("Operational 3D Risk Map")
             route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, zones_gdf) if st.session_state.get('selected_incident') else None
-            deck_map = create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, route_info)
-            if deck_map: st.pydeck_chart(deck_map)
+            st.pydeck_chart(create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, route_info))
         with col2:
             st.subheader("Dispatch Decision Engine")
-            if not route_info: st.info("Select an incident to see the routing plan.")
+            if not route_info: st.info("Select an incident from the sidebar to see the routing plan.")
             elif "error" in route_info: st.error(route_info["error"])
             else:
                 st.success(f"**Plan for Incident {st.session_state.selected_incident['id']}**")
@@ -243,16 +231,15 @@ def main():
             for ts in future_hours:
                 features = {"hour": ts.hour, "day_of_week": ts.weekday(), "is_quincena": ts.day in [14,15,16,29,30,31,1], **forecast_features}
                 mean_pred = engine.predict_citywide_demand(features)
-                std_dev = mean_pred * 0.15 # Assume 15% uncertainty
-                forecast_data.append({'time': ts, 'Predicted Calls': mean_pred, 'Upper Bound': mean_pred + 1.96 * std_dev, 'Lower Bound': mean_pred - 1.96 * std_dev})
+                std_dev = mean_pred * 0.15
+                forecast_data.append({'time': ts, 'Predicted Calls': mean_pred, 'Upper Bound': mean_pred + 1.96 * std_dev, 'Lower Bound': np.maximum(0, mean_pred - 1.96 * std_dev)})
             forecast_df = pd.DataFrame(forecast_data).set_index('time')
             st.area_chart(forecast_df)
         
         st.subheader("Critical Patient Alerts")
         if not patient_alerts: st.success("✅ No critical patient alerts.")
         else:
-            for alert in patient_alerts:
-                st.error(f"**CRITICAL ALERT - Patient {alert['Patient ID']}:** Heart Rate: {alert['Heart Rate']}, Oxygen: {alert['Oxygen %']}%", icon="🚨")
+            for alert in patient_alerts: st.error(f"**CRITICAL ALERT - Patient {alert['Patient ID']}:** Heart Rate: {alert['Heart Rate']}, Oxygen: {alert['Oxygen %']}%", icon="🚨")
 
     with tab3:
         st.header("Strategic Simulation")
