@@ -5,3 +5,4 @@ scikit-learn
 geopandas
 pydeck
 shapely
+PyYAML
