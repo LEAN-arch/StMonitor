@@ -1,15 +1,22 @@
 # Configuration for RedShield AI
-# SME Optimized: Includes road network, model hyperparameters, and lat/lon coordinate format.
+# SME Optimized: Includes road network, model hyperparameters, and updated assets.
 data:
   # Coordinates are specified as [latitude, longitude]
   hospitals:
     "Hospital General": { location: [32.5295, -117.0182], capacity: 100, load: 85 }
     "IMSS Clínica 1": { location: [32.5121, -117.0145], capacity: 120, load: 70 }
     "Angeles": { location: [32.5300, -117.0200], capacity: 100, load: 95 }
+    "Cruz Roja Tijuana": { location: [32.528, -117.025], capacity: 80, load: 55 } # NEW
   ambulances:
     "A01": { location: [32.515, -117.04], status: "Available" }
     "A02": { location: [32.535, -116.96], status: "Available" }
     "A03": { location: [32.52, -117.12], status: "On Mission" }
+    "A04": { location: [32.525, -117.02], status: "Available" }  # NEW - Zona Rio Center
+    "A05": { location: [32.515, -117.115], status: "Available" } # NEW - Near Playas
+    "A06": { location: [32.538, -116.97], status: "Available" } # NEW - Near Otay
+    "A07": { location: [32.50, -117.03], status: "Available" }  # NEW - South of Center
+    "A08": { location: [32.531, -117.015], status: "Available" } # NEW - Zona Rio East
+    "A09": { location: [32.51, -116.98], status: "Available" }  # NEW - South of Otay
   zones:
     "Zona Río": { polygon: [[32.52, -117.01], [32.53, -117.01], [32.53, -117.03], [32.52, -117.03]], crime: 0.7, road_quality: 0.9 }
     "Otay": { polygon: [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]], crime: 0.5, road_quality: 0.7 }
@@ -18,21 +25,21 @@ data:
     "P001": { heart_rate: 145, oxygen: 88, ambulance: "A03" }
     "P002": { heart_rate: 90, oxygen: 97, ambulance: "A01" }
     "P003": { heart_rate: 150, oxygen: 99, ambulance: "A02" }
-
-  # NEW: City Road Network Graph for A* Routing
   road_network:
-    nodes: # Key intersections and points of interest
-      "N_ZR1": { pos: [32.525, -117.02] } # Zona Rio Center
-      "N_ZR2": { pos: [32.528, -117.01] } # Zona Rio East
-      "N_OT1": { pos: [32.535, -116.965] } # Otay Center
-      "N_PL1": { pos: [32.52, -117.12] } # Playas Center
+    nodes:
+      "N_ZR1": { pos: [32.525, -117.02] }
+      "N_ZR2": { pos: [32.528, -117.01] }
+      "N_OT1": { pos: [32.535, -116.965] }
+      "N_PL1": { pos: [32.52, -117.12] }
       "N_H_Gen": { pos: [32.5295, -117.0182] }
       "N_H_IMSS": { pos: [32.5121, -117.0145] }
       "N_H_Ang": { pos: [32.5300, -117.0200] }
+      "N_H_CruzR": { pos: [32.528, -117.025] } # NEW
       "N_Amb_A01": { pos: [32.515, -117.04] }
-    edges: # Connections between nodes: [node1, node2, base_travel_time]
+    edges:
       - ["N_ZR1", "N_ZR2", 2.5]
       - ["N_ZR1", "N_H_Ang", 0.5]
+      - ["N_ZR1", "N_H_CruzR", 0.6] # NEW
       - ["N_ZR2", "N_H_Gen", 0.8]
       - ["N_ZR2", "N_H_IMSS", 3.0]
       - ["N_ZR1", "N_Amb_A01", 4.0]
@@ -40,8 +47,6 @@ data:
       - ["N_ZR2", "N_OT1", 9.0]
       - ["N_PL1", "N_Amb_A01", 5.0]
       - ["N_OT1", "N_H_IMSS", 6.0]
-
-  # NEW: XGBoost Model Hyperparameters (allows tuning without code changes)
   model_params:
     n_estimators: 250
     max_depth: 5
