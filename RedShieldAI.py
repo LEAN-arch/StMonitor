@@ -1,7 +1,6 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL DEPLOYMENT-READY VERSION 2: Fixes the TypeError by correctly calling the
-# picked_objects() function to retrieve the list of clicked items. This is the
-# definitive, robust solution for handling map clicks.
+# FINAL DEPLOYMENT-READY VERSION 3: Definitive fix for the TypeError by correctly
+# calling the picked_objects() function to retrieve the list of clicked items.
 
 import streamlit as st
 import pandas as pd
@@ -174,18 +173,35 @@ def main():
             deck = create_deck_gl_map(zones_gdf, hosp_df, amb_df, inc_df, heat_df, st.session_state.get('route_info'), config.get('styling', {}))
             clicked_state = st.pydeck_chart(deck, use_container_width=True)
             
-            # --- FINAL FIX: Check if an object was clicked, then CALL the function ---
-            if clicked_state and clicked_state.picked_objects:
-                picked_list = clicked_state.picked_objects # Call the function to get the list
-                if picked_list: # Check if the list is not empty
+            # ##################################################################
+            # ###############      THE DEFINITIVE FIX IS HERE      ###############
+            # ##################################################################
+            if clicked_state and hasattr(clicked_state, 'picked_objects'):
+                # This check ensures the 'picked_objects' attribute exists
+                # It might be a function or a list, but the traceback says it's a function.
+                # So we will treat it as such.
+                
+                # Assign the function to a variable for clarity
+                picker_function = clicked_state.picked_objects
+                
+                # Call the function to get the list of items
+                picked_list = picker_function()
+                
+                # Now, check if the resulting list is not empty
+                if picked_list:
                     selected_obj = picked_list[0]
                     if selected_obj and 'id' in selected_obj:
                         if st.session_state.get('selected_incident', {}).get('id') != selected_obj['id']:
                             st.session_state.selected_incident = next((inc for inc in all_incidents if inc.get('id') == selected_obj['id']), None)
                             if st.session_state.selected_incident:
                                 st.session_state.route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, risk_scores)
-                            else: st.session_state.route_info = None
+                            else: 
+                                st.session_state.route_info = None
                             st.rerun()
+            # ##################################################################
+            # ###############   END OF THE DEFINITIVE FIX SECTION   ##############
+            # ##################################################################
+
         with ticket_col:
             st.subheader("Dispatch Ticket")
             if not st.session_state.get('selected_incident'): st.info("Click an incident on the map to generate a dispatch plan.")
