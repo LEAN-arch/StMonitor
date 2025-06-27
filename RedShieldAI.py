@@ -9,7 +9,7 @@ import geopandas as gpd
 from shapely.geometry import Point, Polygon, LineString
 import pydeck as pdk
 from sklearn.ensemble import RandomForestRegressor
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Any
 import yaml
 
