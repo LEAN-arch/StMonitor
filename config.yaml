@@ -1,0 +1,30 @@
+# Configuration as Data: Easily update the system without touching Python code.
+data:
+  hospitals:
+    "Hospital General": { location: [32.5295, -117.0182], capacity: 100, load: 85 }
+    "IMSS Clínica 1": { location: [32.5121, -117.0145], capacity: 120, load: 70 }
+    "Hospital Angeles": { location: [32.5300, -117.0200], capacity: 100, load: 95 }
+  ambulances:
+    "A01": { location: [32.515, -117.04], status: "Available" }
+    "A02": { location: [32.535, -116.96], status: "Available" }
+    "A03": { location: [32.52, -117.12], status: "On Mission" }
+  zones:
+    "Zona Río": { polygon: [[32.52, -117.01], [32.53, -117.01], [32.53, -117.03], [32.52, -117.03]], crime: 0.7, road_quality: 0.9 }
+    "Otay": { polygon: [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]], crime: 0.5, road_quality: 0.7 }
+    "Playas": { polygon: [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]], crime: 0.4, road_quality: 0.8 }
+
+styling:
+  colors:
+    primary: "#00a0ff"
+    available: [0, 255, 127, 255]      # Bright Green
+    on_mission: [128, 128, 128, 180]    # Grey
+    hospital_ok: [0, 255, 127, 255]    # Green
+    hospital_warn: [255, 191, 0, 255] # Yellow
+    hospital_crit: [255, 0, 0, 255]    # Red
+    incident_halo: [255, 80, 80]
+    route_path: [251, 192, 45]
+  sizes:
+    ambulance_available: 4.5
+    ambulance_mission: 2.5
+    hospital: 4.0
+    incident_base: 5.0
