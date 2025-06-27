@@ -1,0 +1,10 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Model artifacts
+demand_model.xgb
+model_features.json
+
+# Streamlit
+.streamlit/
