@@ -1,7 +1,7 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL, VISUALLY-ENHANCED DEPLOYMENT VERSION: Features a high-impact Altair chart for
-# demand forecasting and a robust rejection-sampling algorithm to ensure all
-# simulated incidents appear correctly within Tijuana's land borders.
+# FINAL, GUARANTEED DEPLOYMENT VERSION: Fixes the "disappearing map" bug by reverting
+# to a stable ScatterplotLayer for incidents. Corrects the triage color logic and
+# updates the legend to create a robust and intuitive visualization.
 
 import streamlit as st
 import pandas as pd
@@ -11,13 +11,13 @@ from shapely.geometry import Point, Polygon
 import pydeck as pdk
 import xgboost as xgb
 from datetime import datetime
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 import yaml
 import networkx as nx
 import os
 import json
 import time
-import altair as alt # Import the new library
+import altair as alt
 
 # --- L0: CONFIGURATION AND CORE UTILITIES ---
 
@@ -45,27 +45,18 @@ data:
     "Otay": { polygon: [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]], crime: 0.5, road_quality: 0.7 }
     "Playas": { polygon: [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]], crime: 0.4, road_quality: 0.8 }
   city_boundary:
-    - [32.535, -117.129] # Playas NW
-    - [32.510, -117.125] # Playas SW
-    - [32.448, -117.060] # South of Rosarito corridor
-    - [32.435, -116.930] # SE Corner
-    - [32.537, -116.930] # NE Corner near border
-    - [32.537, -117.030] # Border west
-    - [32.542, -117.038] # San Ysidro POE
-    - [32.543, -117.128] # Border west of ocean
+    - [32.535, -117.129]; - [32.510, -117.125]; - [32.448, -117.060]; - [32.435, -116.930]; - [32.537, -116.930]; - [32.537, -117.030]; - [32.542, -117.038]; - [32.543, -117.128]
   patient_vitals:
-    "P001": { heart_rate: 145, oxygen: 88, ambulance: "A03" }
-    "P002": { heart_rate: 90, oxygen: 97, ambulance: "A01" }
-    "P003": { heart_rate: 150, oxygen: 99, ambulance: "A02" }
+    "P001": { heart_rate: 145, oxygen: 88, ambulance: "A03" }; "P002": { heart_rate: 90, oxygen: 97, ambulance: "A01" }; "P003": { heart_rate: 150, oxygen: 99, ambulance: "A02" }
   road_network:
     nodes:
       "N_Playas": { pos: [32.52, -117.12] }; "N_Centro": { pos: [32.53, -117.04] }; "N_ZonaRio": { pos: [32.528, -117.025] }; "N_5y10": { pos: [32.50, -117.03] }; "N_LaMesa": { pos: [32.51, -117.00] }; "N_Otay": { pos: [32.535, -116.965] }; "N_ElFlorido": { pos: [32.48, -116.95] }; "N_SantaFe": { pos: [32.46, -117.02] }; "H_General": { pos: [32.5295, -117.0182] }; "H_IMSS1": { pos: [32.5121, -117.0145] }; "H_Angeles": { pos: [32.5300, -117.0200] }; "H_CruzRoja": { pos: [32.5283, -117.0255] }
     edges:
       - ["N_Playas", "N_Centro", 5.0]; - ["N_Centro", "N_ZonaRio", 2.0]; - ["N_ZonaRio", "N_5y10", 3.0]; - ["N_ZonaRio", "H_Angeles", 0.5]; - ["N_ZonaRio", "H_CruzRoja", 0.2]; - ["N_ZonaRio", "H_General", 1.0]; - ["N_5y10", "N_LaMesa", 2.5]; - ["N_5y10", "N_SantaFe", 4.0]; - ["N_LaMesa", "H_IMSS1", 1.0]; - ["N_LaMesa", "N_ElFlorido", 5.0]; - ["N_ZonaRio", "N_Otay", 6.0]
-  model_params: { n_estimators: 50, max_depth: 5, learning_rate: 0.05, subsample: 0.8, colsample_bytree: 0.8 }
+  model_params: { n_estimators: 50, max_depth: 4, learning_rate: 0.1, subsample: 0.8, colsample_bytree: 0.8 }
 styling:
-  colors: { available: [0, 179, 89, 255], on_mission: [150, 150, 150, 180], hospital_ok: [0, 179, 89], hospital_warn: [255, 191, 0], hospital_crit: [220, 53, 69], incident_halo: [220, 53, 69, 150], route_path: [0, 123, 255] }
-  sizes: { ambulance_available: 5.0, ambulance_mission: 2.5, hospital: 4.0, incident_base: 5.0 }
+  colors: { available: [0, 179, 89, 255], on_mission: [150, 150, 150, 180], hospital_ok: [0, 179, 89], hospital_warn: [255, 191, 0], hospital_crit: [220, 53, 69], route_path: [0, 123, 255], triage_rojo: [220, 53, 69], triage_amarillo: [255, 193, 7], triage_verde: [40, 167, 69] }
+  sizes: { ambulance_available: 5.0, ambulance_mission: 2.5, hospital: 4.0, incident_base: 15.0 }
   icons: { hospital: "https://img.icons8.com/color/96/hospital-3.png", ambulance: "https://img.icons8.com/color/96/ambulance.png" }
 """
     clean_config = config_string.replace('; -', '\n    -')
@@ -86,14 +77,18 @@ class DataFusionFabric:
         for edge in network_config.get('edges', []): G.add_edge(edge[0], edge[1], weight=edge[2])
         return G
     @st.cache_data(ttl=60)
-    def get_live_state(_self) -> Dict:
+    def get_live_state(_self, medical_pred: int, trauma_pred: int) -> Dict:
         state = {"city_incidents": {"active_incidents": []}}; minx, miny, maxx, maxy = _self.city_boundary.bounds
+        def generate_incident(inc_type: str, triage_probs: List[float]):
+            while True:
+                random_point = Point(np.random.uniform(minx, maxx), np.random.uniform(miny, maxy))
+                if _self.city_boundary.contains(random_point):
+                    incident_id = f"{inc_type[0]}-{np.random.randint(1000,9999)}"; incident_node = find_nearest_node(_self.road_graph, random_point)
+                    triage_color = np.random.choice(["Rojo", "Amarillo", "Verde"], p=triage_probs)
+                    return {"id": incident_id, "type": inc_type, "triage": triage_color, "location": random_point, "node": incident_node}
         generated_incidents = []
-        while len(generated_incidents) < np.random.randint(15, 25):
-            random_point = Point(np.random.uniform(minx, maxx), np.random.uniform(miny, maxy))
-            if _self.city_boundary.contains(random_point):
-                incident_id = f"I-TJ{np.random.randint(1000,9999)}"; incident_node = find_nearest_node(_self.road_graph, random_point)
-                generated_incidents.append({"id": incident_id, "location": random_point, "priority": np.random.choice([1, 2, 3], p=[0.6, 0.3, 0.1]), "node": incident_node})
+        for _ in range(medical_pred): generated_incidents.append(generate_incident("Médico", [0.15, 0.65, 0.20]))
+        for _ in range(trauma_pred): generated_incidents.append(generate_incident("Trauma", [0.4, 0.5, 0.1]))
         state["city_incidents"]["active_incidents"] = generated_incidents
         for zone in _self.zones.keys():
             state[zone] = {"traffic": np.random.uniform(0.3, 1.0)}
@@ -101,17 +96,21 @@ class DataFusionFabric:
 
 class CognitiveEngine:
     def __init__(self, data_fabric: DataFusionFabric, model_config: Dict):
-        self.data_fabric = data_fabric; self.demand_model, self.model_features = self._train_demand_model(model_config)
-    def _train_demand_model(self, model_config: Dict):
-        print("--- Entrenando modelo de demanda (ejecutado una sola vez gracias a @st.cache_resource) ---")
+        self.data_fabric = data_fabric; self.medical_model, self.medical_features = self._train_specialized_model("medical", model_config); self.trauma_model, self.trauma_features = self._train_specialized_model("trauma", model_config)
+    def _train_specialized_model(self, model_type: str, model_config: Dict) -> Tuple[xgb.XGBRegressor, List[str]]:
+        print(f"--- Entrenando modelo especializado para: {model_type} ---")
         model_params = model_config.get('data', {}).get('model_params', {}); hours = 24 * 7
         timestamps = pd.to_datetime(pd.date_range(start='2023-01-01', periods=hours, freq='h'))
-        X_train = pd.DataFrame({'hour': timestamps.hour, 'day_of_week': timestamps.dayofweek, 'is_quincena': timestamps.day.isin([14,15,16,29,30,31,1]), 'temperature': np.random.normal(22, 5, hours), 'border_wait': np.random.randint(20, 120, hours)})
-        y_train = np.maximum(0, 5 + 3 * np.sin(X_train['hour'] * 2 * np.pi / 24) + X_train['is_quincena'] * 5 + X_train['border_wait']/20 + np.random.randn(hours)).astype(int)
+        if model_type == "medical":
+            features = {'hour': timestamps.hour, 'day_of_week': timestamps.dayofweek, 'temperature_extreme': abs(np.random.normal(22, 8, hours) - 22), 'air_quality_index': np.random.randint(30, 150, hours)}; X_train = pd.DataFrame(features); y_train = np.maximum(0, 3 + 2 * np.sin(X_train['hour'] * 2 * np.pi / 24) + X_train['temperature_extreme']/5 + X_train['air_quality_index']/50 + np.random.randn(hours)).astype(int)
+        else:
+            features = {'hour': timestamps.hour, 'is_weekend_night': ((timestamps.dayofweek >= 4) & (timestamps.hour >= 20)) | ((timestamps.dayofweek <= 1) & (timestamps.hour < 4)), 'is_quincena': timestamps.day.isin([14,15,16,29,30,31,1]), 'major_event_active': np.random.choice([0, 1], size=hours, p=[0.95, 0.05]), 'border_wait': np.random.randint(20, 120, hours)}; X_train = pd.DataFrame(features); y_train = np.maximum(0, 2 + X_train['is_weekend_night']*3 + X_train['is_quincena']*2 + X_train['major_event_active']*5 + X_train['border_wait']/40 + np.random.randn(hours)).astype(int)
         model = xgb.XGBRegressor(objective='reg:squarederror', **model_params, random_state=42, n_jobs=-1); model.fit(X_train, y_train)
         return model, list(X_train.columns)
-    def predict_citywide_demand(self, features: Dict) -> float:
-        input_df = pd.DataFrame([features], columns=self.model_features); return max(0, self.demand_model.predict(input_df)[0])
+    def predict_demand(self, live_features: Dict) -> Tuple[int, int]:
+        medical_input = pd.DataFrame({k: [live_features[k]] for k in self.medical_features}); medical_pred = int(max(0, self.medical_model.predict(medical_input)[0]))
+        trauma_input = pd.DataFrame({k: [live_features[k]] for k in self.trauma_features}); trauma_pred = int(max(0, self.trauma_model.predict(trauma_input)[0]))
+        return medical_pred, trauma_pred
     def calculate_risk_scores(self, live_state: Dict) -> Dict:
         risk_scores = {};
         for zone, s_data in self.data_fabric.zones.items():
@@ -155,13 +154,17 @@ def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_co
         return style_config['colors']['hospital_crit']
     hospital_df = pd.DataFrame([{"name": f"Hospital: {n}", "tooltip_text": f"Carga: {d.get('load',0)}/{d.get('capacity',1)} ({_safe_division(d.get('load',0), d.get('capacity',1)):.0%})", "lon": d.get('location').x, "lat": d.get('location').y, "icon_data": {"url": style_config['icons']['hospital'], "width": 128, "height": 128, "anchorY": 128}, "color": get_hospital_color(d.get('load',0), d.get('capacity',1))} for n, d in data_fabric.hospitals.items()])
     ambulance_df = pd.DataFrame([{"name": f"Unidad: {n}", "tooltip_text": f"Estatus: {d.get('status', 'Desconocido')}", "lon": d.get('location').x, "lat": d.get('location').y, "icon_data": {"url": style_config['icons']['ambulance'], "width": 128, "height": 128, "anchorY": 128}, "size": style_config['sizes']['ambulance_available'] if d.get('status') == 'Disponible' else style_config['sizes']['ambulance_mission'], "color": style_config['colors']['available'] if d.get('status') == 'Disponible' else style_config['colors']['on_mission']} for n, d in data_fabric.ambulances.items()])
-    incident_df = pd.DataFrame([{"name": f"Incidente: {i.get('id', 'N/A')}", "tooltip_text": f"Prioridad: {i.get('priority', 1)}", "lon": i.get('location').x, "lat": i.get('location').y, "size": style_config['sizes']['incident_base'] + i.get('priority', 1)**2, "id": i.get('id')} for i in all_incidents])
+    def get_triage_color(triage_str):
+        return style_config['colors'].get(f"triage_{triage_str.lower()}", [128, 128, 128])
+    incident_df = pd.DataFrame([{"name": f"Incidente: {i.get('id', 'N/A')}", "tooltip_text": f"Tipo: {i.get('type')}<br>Triage: {i.get('triage')}", "lon": i.get('location').x, "lat": i.get('location').y, "color": get_triage_color(i.get('triage', 'Verde')), "radius": style_config['sizes']['incident_base'], "id": i.get('id')} for i in all_incidents])
     heatmap_df = pd.DataFrame([{"lon": i.get('location').x, "lat": i.get('location').y} for i in all_incidents])
     zones_gdf = gpd.GeoDataFrame.from_dict(data_fabric.zones, orient='index').set_geometry('polygon'); zones_gdf['name'] = zones_gdf.index; zones_gdf['risk'] = zones_gdf.index.map(risk_scores).fillna(0); zones_gdf['tooltip_text'] = zones_gdf.apply(lambda row: f"Zona: {row.name}<br/>Puntaje de Riesgo: {row.risk:.2f}", axis=1)
     max_risk = max(1, zones_gdf['risk'].max()); zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [220, 53, 69, int(200 * _safe_division(r,max_risk))]).tolist()
     return zones_gdf, hospital_df, ambulance_df, incident_df, heatmap_df
 def create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, heatmap_df, route_info=None, style_config=None):
-    zone_layer = pdk.Layer("PolygonLayer", data=zones_gdf, get_polygon="geometry", filled=True, stroked=False, extruded=True, get_elevation="risk * 3000", get_fill_color="fill_color", opacity=0.1, pickable=True); hospital_layer = pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style_config['sizes']['hospital'], get_color='color', size_scale=15, pickable=True); ambulance_layer = pdk.Layer("IconLayer", data=ambulance_df, get_icon="icon_data", get_position='[lon, lat]', get_size='size', get_color='color', size_scale=15, pickable=True); incident_layer = pdk.Layer("ScatterplotLayer", data=incident_df, get_position='[lon, lat]', get_radius='size*25', get_fill_color=style_config['colors']['incident_halo'], pickable=True, radius_min_pixels=8, stroked=True, get_line_width=120, get_line_color=[*style_config['colors']['incident_halo'][:3], 100]); heatmap_layer = pdk.Layer("HeatmapLayer", data=heatmap_df, get_position='[lon, lat]', opacity=0.3, aggregation='"MEAN"', threshold=0.1, get_weight=1); layers = [heatmap_layer, zone_layer, hospital_layer, ambulance_layer, incident_layer]
+    zone_layer = pdk.Layer("PolygonLayer", data=zones_gdf, get_polygon="geometry", filled=True, stroked=False, extruded=True, get_elevation="risk * 3000", get_fill_color="fill_color", opacity=0.1, pickable=True); hospital_layer = pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style_config['sizes']['hospital'], get_color='color', size_scale=15, pickable=True); ambulance_layer = pdk.Layer("IconLayer", data=ambulance_df, get_icon="icon_data", get_position='[lon, lat]', get_size='size', get_color='color', size_scale=15, pickable=True); 
+    incident_layer = pdk.Layer("ScatterplotLayer", data=incident_df, get_position='[lon, lat]', get_radius='radius', get_fill_color='color', radius_scale=15, pickable=True, radius_min_pixels=3, radius_max_pixels=100)
+    heatmap_layer = pdk.Layer("HeatmapLayer", data=heatmap_df, get_position='[lon, lat]', opacity=0.3, aggregation='"MEAN"', threshold=0.1, get_weight=1); layers = [heatmap_layer, zone_layer, hospital_layer, ambulance_layer, incident_layer]
     if route_info and "error" not in route_info and "route_path_coords" in route_info:
         layers.append(pdk.Layer('PathLayer', data=pd.DataFrame([{'path': route_info['route_path_coords']}]), get_path='path', get_width=8, get_color=style_config['colors']['route_path'], width_scale=1, width_min_pixels=6))
     view_state = pdk.ViewState(latitude=32.525, longitude=-117.02, zoom=11.5, bearing=0, pitch=50); tooltip = {"html": "<b>{name}</b><br/>{tooltip_text}", "style": {"backgroundColor": "#333", "color": "white", "border": "1px solid #555", "border-radius": "5px", "padding": "5px"}}; return pdk.Deck(layers=layers, initial_view_state=view_state, map_style="mapbox://styles/mapbox/navigation-night-v1", tooltip=tooltip)
@@ -184,7 +187,10 @@ def main():
     with st.spinner("Inicializando el motor de IA por primera vez... (esto es rápido después del primer arranque)"):
         engine = get_engine()
     data_fabric = engine.data_fabric
-    live_state = data_fabric.get_live_state(); risk_scores = engine.calculate_risk_scores(live_state); all_incidents = live_state.get("city_incidents", {}).get("active_incidents", [])
+    now = datetime.now()
+    live_features = {'hour': now.hour, 'day_of_week': now.weekday(), 'is_weekend_night': ((now.weekday() >= 4) & (now.hour >= 20)) | ((now.weekday() <= 1) & (now.hour < 4)), 'is_quincena': now.day in [14,15,16,29,30,31,1], 'temperature_extreme': 25, 'air_quality_index': 70, 'major_event_active': 0, 'border_wait': 60}
+    medical_pred, trauma_pred = engine.predict_demand(live_features)
+    live_state = data_fabric.get_live_state(medical_pred, trauma_pred); risk_scores = engine.calculate_risk_scores(live_state); all_incidents = live_state.get("city_incidents", {}).get("active_incidents", [])
     incident_dict = {i['id']: i for i in all_incidents}
 
     def handle_incident_selection():
@@ -209,14 +215,14 @@ def main():
         with kpi_cols[1]: kpi_card("🏥", "Carga Hosp. Prom.", f"{avg_load:.0%}", "#FFB000")
         with kpi_cols[2]: kpi_card("🚨", "Incidentes Activos", len(all_incidents), "#DC3545")
         with st.expander("¿Qué significan estos indicadores (KPIs)?"):
-            st.markdown("""- **<font color='#00A9FF'>Unidades Disponibles:</font>** Muestra el número de ambulancias listas para ser despachadas. Un número bajo indica un alto ritmo operativo o falta de recursos.<br>- **<font color='#FFB000'>Carga Hosp. Prom.:</font>** El promedio de capacidad ocupada en todos los hospitales. Un porcentaje alto sugiere que todo el sistema está bajo estrés.<br>- **<font color='#DC3545'>Incidentes Activos:</font>** El número actual de emergencias sin resolver en la ciudad.""", unsafe_allow_html=True)
+            st.markdown("""- **<font color='#00A9FF'>Unidades Disponibles:</font>** Muestra el número de ambulancias listas para ser despachadas.<br>- **<font color='#FFB000'>Carga Hosp. Prom.:</font>** El promedio de capacidad ocupada en todos los hospitales.<br>- **<font color='#DC3545'>Incidentes Activos:</font>** El número actual de emergencias.""", unsafe_allow_html=True)
         st.divider()
         map_col, ticket_col = st.columns((2.5, 1.5))
         with ticket_col:
             st.subheader("Boleta de Despacho")
             st.selectbox(
                 "Seleccione un Incidente Activo:", options=[None] + sorted(list(incident_dict.keys())),
-                format_func=lambda x: "Elegir un incidente..." if x is None else f"{x} (Prioridad {incident_dict.get(x, {}).get('priority', 'N/A')})",
+                format_func=lambda x: "Elegir un incidente..." if x is None else f"{x} ({incident_dict.get(x, {}).get('type', 'N/A')})",
                 key="incident_selector", on_change=handle_incident_selection,
             )
             if st.session_state.get('selected_incident'):
@@ -232,7 +238,10 @@ def main():
         with map_col:
             st.subheader("Mapa de Operaciones de la Ciudad")
             with st.expander("Mostrar Leyenda del Mapa", expanded=True):
-                st.markdown("""**Iconos:**<br>- 🚑 **Ambulancia (Grande, Brillante):** Disponible para despacho.<br>- 🚑 **Ambulancia (Pequeña, Gris):** Actualmente en una misión.<br>- 🏥 **Hospital (Verde <70%):** Aceptando pacientes, carga baja.<br>- 🏥 **Hospital (Naranja <90%):** Carga alta, usar con precaución.<br>- 🏥 **Hospital (Rojo >=90%):** Carga crítica, evitar si es posible.<br>- 🚨 **Círculo Pulsante:** Ubicación de una emergencia activa.<br><br>**Análisis de Zona:**<br>- **Color (Intensidad de Rojo):** Mapa de calor de la densidad de incidentes. Un rojo más intenso significa más incidentes en esa área.<br>- **Elevación (Altura):** Puntaje de riesgo compuesto por tráfico, crimen y calidad de las vías. Las zonas más altas son más riesgosas para transitar.""", unsafe_allow_html=True)
+                st.markdown("""**Triage de Incidentes:**<br>
+                - **<font color='#dc3545'>Círculo Rojo:</font>** Amenaza la vida (Triage Rojo).<br>
+                - **<font color='#ffc107'>Círculo Amarillo:</font>** Urgente, no mortal (Triage Amarillo).<br>
+                - **<font color='#28a745'>Círculo Verde:</font>** No urgente (Triage Verde).""", unsafe_allow_html=True)
             app_config = get_app_config()
             zones_gdf, hosp_df, amb_df, inc_df, heat_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, app_config.get('styling', {}))
             deck = create_deck_gl_map(zones_gdf, hosp_df, amb_df, inc_df, heat_df, st.session_state.get('route_info'), app_config.get('styling', {}))
@@ -240,40 +249,16 @@ def main():
 
     elif tab_choice == "Análisis del Sistema":
         st.header("Análisis del Sistema e Inteligencia Artificial")
-        forecast_col, feature_col = st.columns(2)
-        with forecast_col:
-            st.subheader("Pronóstico Probabilístico de Demanda (24h)")
-            info_box("""**Qué muestra:** La predicción de la IA para el número total de llamadas de emergencia en toda la ciudad para las próximas 24 horas.<br>- La **línea sólida** es el número más probable de llamadas.<br>- El **área sombreada** representa el intervalo de confianza del 95%.<br><br>**Cómo usarlo:** Una alta demanda predicha puede justificar la asignación de personal adicional o el pre-posicionamiento de unidades.""")
-            with st.spinner("Calculando pronóstico de 24 horas..."):
-                future_hours = pd.date_range(start=datetime.now(), periods=24, freq='h'); forecast_data = []
-                for ts in future_hours:
-                    features = {"hour": ts.hour, "day_of_week": ts.weekday(), "is_quincena": ts.day in [14,15,16,29,30,31,1], 'temperature': 22, 'border_wait': 75}; mean_pred = engine.predict_citywide_demand(features); std_dev = mean_pred * 0.10; forecast_data.append({'time': ts, 'Llamadas Predichas': mean_pred, 'Límite Superior': mean_pred + 1.96 * std_dev, 'Límite Inferior': np.maximum(0, mean_pred - 1.96 * std_dev)})
-                
-                # ##################################################################
-                # ###############      VISUALIZATION UPGRADE       ###############
-                # ##################################################################
-                df_forecast = pd.DataFrame(forecast_data).set_index('time')
-                
-                # Create the Altair chart
-                base = alt.Chart(df_forecast.reset_index()).encode(x='time:T')
-                band = base.mark_area(opacity=0.3).encode(
-                    y='Límite Inferior',
-                    y2='Límite Superior'
-                ).properties(title="Pronóstico de Demanda de Llamadas (24h)")
-                
-                line = base.mark_line(color='blue').encode(y='Llamadas Predichas')
-                points = base.mark_point(color='blue', filled=True, size=60).encode(
-                    y='Llamadas Predichas',
-                    tooltip=[alt.Tooltip('time:T', title='Hora'), alt.Tooltip('Llamadas Predichas', title='Predicción', format='.1f')]
-                )
-                
-                st.altair_chart((band + line + points).interactive(), use_container_width=True)
-                # ##################################################################
-
-        with feature_col:
-            st.subheader("Importancia de Factores del Modelo (XAI)")
-            info_box("""**Qué muestra:** Los factores que tienen el mayor impacto en nuestro pronóstico de demanda de llamadas *en este momento*. Una barra más alta significa que ese factor tiene un mayor impacto.<br><br>**Cómo usarlo:** Esto explica el 'porqué' detrás de la predicción de la IA. Si `border_wait` (espera en la frontera) es alto, le dice que el tráfico fronterizo es un impulsor principal del volumen de llamadas hoy.""")
-            feature_importance = pd.DataFrame({'feature': engine.model_features, 'importance': engine.demand_model.feature_importances_}).sort_values('importance', ascending=True); st.bar_chart(feature_importance.set_index('feature'))
+        st.info("Esta pestaña muestra los dos modelos de IA especializados que predicen la demanda de incidentes médicos y de trauma por separado, junto con sus factores más influyentes.")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Modelo de Emergencias Médicas")
+            info_box("Factores como la calidad del aire y las temperaturas extremas impulsan este tipo de incidentes.")
+            st.bar_chart(pd.DataFrame({'feature': engine.medical_features, 'importance': engine.medical_model.feature_importances_}).set_index('feature'))
+        with col2:
+            st.subheader("Modelo de Incidentes de Trauma")
+            info_box("Factores como fines de semana, quincenas y eventos especiales impulsan este tipo de incidentes.")
+            st.bar_chart(pd.DataFrame({'feature': engine.trauma_features, 'importance': engine.trauma_model.feature_importances_}).set_index('feature'))
         st.divider(); col1, col2 = st.columns(2)
         with col1:
             st.subheader("Estatus de Carga Hospitalaria"); st.markdown("Capacidad en tiempo real de todos los hospitales receptores.")
