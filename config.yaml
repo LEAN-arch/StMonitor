@@ -1,5 +1,5 @@
 # Configuration for RedShield AI
-# SME Optimized: Includes road network, model hyperparameters, and updated assets.
+# SME Optimized: Includes realistic asset distribution and a full city boundary.
 data:
   # Coordinates are specified as [latitude, longitude]
   hospitals:
@@ -8,19 +8,28 @@ data:
     "Angeles": { location: [32.5300, -117.0200], capacity: 100, load: 95 }
     "Cruz Roja Tijuana": { location: [32.5283, -117.0255], capacity: 80, load: 60 }
   ambulances:
-    "A01": { location: [32.515, -117.04], status: "Disponible" }
-    "A02": { location: [32.535, -116.96], status: "Disponible" }
-    "A03": { location: [32.52, -117.12], status: "En Misión" }
-    "A04": { location: [32.525, -117.02], status: "Disponible" }
-    "A05": { location: [32.515, -117.115], status: "Disponible" }
-    "A06": { location: [32.538, -116.97], status: "Disponible" }
-    "A07": { location: [32.50, -117.03], status: "Disponible" }
-    "A08": { location: [32.531, -117.015], status: "Disponible" }
-    "A09": { location: [32.51, -116.98], status: "Disponible" }
+    # Staging points are now realistically distributed across the city
+    "A01": { location: [32.515, -117.115], status: "Disponible" } # Playas
+    "A02": { location: [32.535, -116.96], status: "Disponible" }  # Otay
+    "A03": { location: [32.508, -117.00], status: "En Misión" }     # La Mesa
+    "A04": { location: [32.525, -117.02], status: "Disponible" }  # Zona Rio
+    "A05": { location: [32.48, -116.95], status: "Disponible" }  # El Florido
+    "A06": { location: [32.538, -117.08], status: "Disponible" } # La Cacho
+    "A07": { location: [32.50, -117.03], status: "Disponible" }  # Agua Caliente
+    "A08": { location: [32.46, -117.02], status: "Disponible" }  # Santa Fe
+    "A09": { location: [32.51, -116.98], status: "Disponible" }  # Buena Vista
   zones:
-    "Zona Río": { polygon: [[32.52, -117.01], [32.53, -117.01], [32.53, -117.03], [32.52, -117.03]], crime: 0.7, road_quality: 0.9 }
+    "Zona Río": { polygon: [[32.52, -117.01], [32.535, -117.01], [32.535, -117.035], [32.52, -117.035]], crime: 0.7, road_quality: 0.9 }
     "Otay": { polygon: [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]], crime: 0.5, road_quality: 0.7 }
     "Playas": { polygon: [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]], crime: 0.4, road_quality: 0.8 }
+  
+  # NEW: A boundary polygon covering the main operational area of Tijuana
+  city_boundary:
+    - [32.545, -117.14]  # NW Corner (Near Playas)
+    - [32.555, -116.93]  # NE Corner (Otay)
+    - [32.44, -116.93]   # SE Corner (El Florido area)
+    - [32.45, -117.14]   # SW Corner (Santa Fe area)
+
   patient_vitals:
     "P001": { heart_rate: 145, oxygen: 88, ambulance: "A03" }
     "P002": { heart_rate: 90, oxygen: 97, ambulance: "A01" }
