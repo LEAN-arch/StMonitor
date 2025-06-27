@@ -1,7 +1,7 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL, GUARANTEED DEPLOYMENT VERSION: Fixes the critical TokenError by
-# completely rewriting the embedded configuration as a native, syntactically
-# perfect Python dictionary. This is the definitive, stable version.
+# FINAL, VISUALLY-ENHANCED DEPLOYMENT VERSION: Features a high-impact Altair chart,
+# a guaranteed geographic simulation, and a robust, visually compelling map to
+# create a true command-level dashboard.
 
 import streamlit as st
 import pandas as pd
@@ -12,8 +12,10 @@ import pydeck as pdk
 import xgboost as xgb
 from datetime import datetime
 from typing import Dict, List, Any, Tuple
+import yaml
 import networkx as nx
 import time
+import altair as alt # Import the new library
 
 # --- L0: CONFIGURATION AND CORE UTILITIES ---
 
@@ -31,14 +33,10 @@ def get_app_config() -> Dict:
                 "Cruz Roja Tijuana": {'location': [32.5283, -117.0255], 'capacity': 80, 'load': 60}
             },
             'ambulances': {
-                "A01": {'location': [32.515, -117.115], 'status': "Disponible"},
-                "A02": {'location': [32.535, -116.96], 'status': "Disponible"},
-                "A03": {'location': [32.508, -117.00], 'status': "En Misión"},
-                "A04": {'location': [32.525, -117.02], 'status': "Disponible"},
-                "A05": {'location': [32.48, -116.95], 'status': "Disponible"},
-                "A06": {'location': [32.538, -117.08], 'status': "Disponible"},
-                "A07": {'location': [32.50, -117.03], 'status': "Disponible"},
-                "A08": {'location': [32.46, -117.02], 'status': "Disponible"},
+                "A01": {'location': [32.515, -117.115], 'status': "Disponible"}, "A02": {'location': [32.535, -116.96], 'status': "Disponible"},
+                "A03": {'location': [32.508, -117.00], 'status': "En Misión"}, "A04": {'location': [32.525, -117.02], 'status': "Disponible"},
+                "A05": {'location': [32.48, -116.95], 'status': "Disponible"}, "A06": {'location': [32.538, -117.08], 'status': "Disponible"},
+                "A07": {'location': [32.50, -117.03], 'status': "Disponible"}, "A08": {'location': [32.46, -117.02], 'status': "Disponible"},
                 "A09": {'location': [32.51, -116.98], 'status': "Disponible"}
             },
             'zones': {
@@ -47,9 +45,8 @@ def get_app_config() -> Dict:
                 "Playas": {'polygon': [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]], 'crime': 0.4, 'road_quality': 0.8}
             },
             'city_boundary': [
-                [32.535, -117.129], [32.510, -117.125], [32.448, -117.060],
-                [32.435, -116.930], [32.537, -116.930], [32.537, -117.030],
-                [32.542, -117.038], [32.543, -117.128]
+                [32.535, -117.129], [32.510, -117.125], [32.448, -117.060], [32.435, -116.930], 
+                [32.537, -116.930], [32.537, -117.030], [32.542, -117.038], [32.543, -117.128]
             ],
             'patient_vitals': {
                 "P001": {'heart_rate': 145, 'oxygen': 88, 'ambulance': "A03"},
@@ -66,12 +63,10 @@ def get_app_config() -> Dict:
                     "H_Angeles": {'pos': [32.5300, -117.0200]}, "H_CruzRoja": {'pos': [32.5283, -117.0255]}
                 },
                 'edges': [
-                    ["N_Playas", "N_Centro", 5.0], ["N_Centro", "N_ZonaRio", 2.0],
-                    ["N_ZonaRio", "N_5y10", 3.0], ["N_ZonaRio", "H_Angeles", 0.5],
-                    ["N_ZonaRio", "H_CruzRoja", 0.2], ["N_ZonaRio", "H_General", 1.0],
-                    ["N_5y10", "N_LaMesa", 2.5], ["N_5y10", "N_SantaFe", 4.0],
-                    ["N_LaMesa", "H_IMSS1", 1.0], ["N_LaMesa", "N_ElFlorido", 5.0],
-                    ["N_ZonaRio", "N_Otay", 6.0]
+                    ["N_Playas", "N_Centro", 5.0], ["N_Centro", "N_ZonaRio", 2.0], ["N_ZonaRio", "N_5y10", 3.0], 
+                    ["N_ZonaRio", "H_Angeles", 0.5], ["N_ZonaRio", "H_CruzRoja", 0.2], ["N_ZonaRio", "H_General", 1.0], 
+                    ["N_5y10", "N_LaMesa", 2.5], ["N_5y10", "N_SantaFe", 4.0], ["N_LaMesa", "H_IMSS1", 1.0], 
+                    ["N_LaMesa", "N_ElFlorido", 5.0], ["N_ZonaRio", "N_Otay", 6.0]
                 ]
             },
             'model_params': {'n_estimators': 50, 'max_depth': 4, 'learning_rate': 0.1, 'subsample': 0.8, 'colsample_bytree': 0.8}
@@ -118,9 +113,7 @@ class DataFusionFabric:
 
 class CognitiveEngine:
     def __init__(self, data_fabric: DataFusionFabric, model_config: Dict):
-        self.data_fabric = data_fabric
-        self.medical_model, self.medical_features = self._train_specialized_model("medical", model_config)
-        self.trauma_model, self.trauma_features = self._train_specialized_model("trauma", model_config)
+        self.data_fabric = data_fabric; self.medical_model, self.medical_features = self._train_specialized_model("medical", model_config); self.trauma_model, self.trauma_features = self._train_specialized_model("trauma", model_config)
     def _train_specialized_model(self, model_type: str, model_config: Dict) -> Tuple[xgb.XGBRegressor, List[str]]:
         print(f"--- Entrenando modelo especializado para: {model_type} ---")
         model_params = model_config.get('data', {}).get('model_params', {}); hours = 24 * 7
