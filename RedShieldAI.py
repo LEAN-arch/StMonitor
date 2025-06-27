@@ -197,15 +197,12 @@ def main():
         with map_col:
             zones_gdf, hospital_df, ambulance_df, incident_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, config.get('styling', {}))
             
-            # BUG FIX: Removed the failing on_select parameter. The return value 'clicked' is all that's needed.
-            # The key 'deck_map' is also essential for Streamlit to track the component's state.
+            # BUG FIX: Removed the failing on_select parameter and now check the return value correctly.
             clicked_state = st.pydeck_chart(create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, st.session_state.get('route_info'), config.get('styling', {})), key="deck_map")
             
-            # This is the correct, robust way to handle PyDeck clicks
-            if clicked_state and clicked_state.picked_objects:
+            if clicked_state and clicked_state.get("picked_objects"):
                 # The picked object is a list, we take the first one.
-                selected_obj = clicked_state.picked_objects[0]
-                # We check for 'id' to ensure we only process clicks on our incidents
+                selected_obj = clicked_state["picked_objects"][0]
                 if selected_obj and 'id' in selected_obj:
                     # To prevent infinite reruns, only update state if the selection has changed
                     if st.session_state.get('selected_incident', {}).get('id') != selected_obj['id']:
@@ -242,9 +239,10 @@ def main():
             for name, data in data_fabric.hospitals.items():
                 load_pct = _safe_division(data.get('load',0), data.get('capacity',1)); st.markdown(f"**{name}** ({data.get('load')}/{data.get('capacity')})"); st.progress(load_pct)
         with col2:
-            st.subheader("Critical Patient Alerts"); 
+            st.subheader("Critical Patient Alerts")
             patient_alerts = engine.get_patient_alerts()
-            if not patient_alerts: st.success("✅ No critical patient alerts at this time.")
+            if not patient_alerts:
+                st.success("✅ No critical patient alerts at this time.")
             else:
                 for alert in patient_alerts:
                     st.error(f"**Patient {alert.get('Patient ID')}:** HR: {alert.get('Heart Rate')}, O2: {alert.get('Oxygen %')}% | Unit: {alert.get('Ambulance')}", icon="❤️‍🩹")
