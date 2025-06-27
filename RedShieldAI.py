@@ -1,6 +1,6 @@
 # RedShieldAI_SME_Optimized_Command_Center.py
-# FINAL DEPLOYMENT-READY VERSION 2: Fixes the TypeError by removing the invalid 'key'
-# argument from the st.pydeck_chart call, aligning with the component's API.
+# FINAL DEPLOYMENT-READY VERSION 3: Definitive fix for the TypeError by removing
+# the invalid 'key' argument from the st.pydeck_chart call.
 
 import streamlit as st
 import pandas as pd
@@ -35,13 +35,11 @@ def load_demand_model() -> tuple:
     return model, features
 
 def _safe_division(n, d): return n / d if d else 0
-
 def find_nearest_node(graph: nx.Graph, point: Point):
     return min(graph.nodes, key=lambda node: point.distance(Point(graph.nodes[node]['pos'][1], graph.nodes[node]['pos'][0])))
 
 # --- L1: DATA & MODELING LAYER ---
 class DataFusionFabric:
-    # ... (This class is correct, no changes needed)
     def __init__(self, config: Dict):
         self.config = config.get('data', {})
         self.hospitals = {name: {'location': Point(data['location'][1], data['location'][0]), 'capacity': data['capacity'], 'load': data['load']} for name, data in self.config.get('hospitals', {}).items()}
@@ -68,7 +66,6 @@ class DataFusionFabric:
         return state
 
 class CognitiveEngine:
-    # ... (This class is correct, no changes needed)
     def __init__(self, data_fabric: DataFusionFabric):
         self.data_fabric = data_fabric
         self.demand_model, self.model_features = load_demand_model()
@@ -76,7 +73,7 @@ class CognitiveEngine:
         input_df = pd.DataFrame([features], columns=self.model_features)
         return max(0, self.demand_model.predict(input_df)[0])
     def calculate_risk_scores(self, live_state: Dict) -> Dict:
-        risk_scores = {}
+        risk_scores = {};
         for zone, s_data in self.data_fabric.zones.items():
             l_data = live_state.get(zone, {}); risk = (l_data.get('traffic', 0.5) * 0.6 + (1 - s_data.get('road_quality', 0.5)) * 0.2 + s_data.get('crime', 0.5) * 0.2); risk_scores[zone] = risk * (1 + len(l_data.get('active_incidents', [])))
         return risk_scores
@@ -94,36 +91,22 @@ class CognitiveEngine:
         amb_node_map = {name: find_nearest_node(self.data_fabric.road_graph, data['location']) for name, data in available_ambulances.items()}
         ambulance_unit, amb_start_node = min(amb_node_map.items(), key=lambda item: nx.shortest_path_length(self.data_fabric.road_graph, source=item[1], target=incident_node, weight='weight'))
         def cost_heuristic(u, v, d):
-            edge_data = self.data_fabric.road_graph.get_edge_data(u, v); pos_u, pos_v = self.data_fabric.road_graph.nodes[u]['pos'], self.data_fabric.road_graph.nodes[v]['pos']
-            midpoint = Point(np.mean([pos_u[1], pos_v[1]]), np.mean([pos_u[0], pos_v[0]]))
-            zone = next((name for name, z_data in self.data_fabric.zones.items() if z_data['polygon'].contains(midpoint)), None)
-            risk_multiplier = 1 + risk_scores.get(zone, 0)
-            return edge_data.get('weight', 1) * risk_multiplier
+            edge_data = self.data_fabric.road_graph.get_edge_data(u, v); pos_u, pos_v = self.data_fabric.road_graph.nodes[u]['pos'], self.data_fabric.road_graph.nodes[v]['pos']; midpoint = Point(np.mean([pos_u[1], pos_v[1]]), np.mean([pos_u[0], pos_v[0]])); zone = next((name for name, z_data in self.data_fabric.zones.items() if z_data['polygon'].contains(midpoint)), None); risk_multiplier = 1 + risk_scores.get(zone, 0); return edge_data.get('weight', 1) * risk_multiplier
         options = []; hosp_node_map = {name: find_nearest_node(self.data_fabric.road_graph, data['location']) for name, data in self.data_fabric.hospitals.items()}
         for name, h_node in hosp_node_map.items():
             h_data = self.data_fabric.hospitals[name]
             try:
-                eta_to_incident = nx.astar_path_length(self.data_fabric.road_graph, amb_start_node, incident_node, heuristic=None, weight=cost_heuristic)
-                path_to_incident = nx.astar_path(self.data_fabric.road_graph, amb_start_node, incident_node, heuristic=None, weight=cost_heuristic)
-                eta_to_hospital = nx.astar_path_length(self.data_fabric.road_graph, incident_node, h_node, heuristic=None, weight=cost_heuristic)
-                path_to_hospital = nx.astar_path(self.data_fabric.road_graph, incident_node, h_node, heuristic=None, weight=cost_heuristic)
-                total_eta = eta_to_incident + eta_to_hospital; full_path_nodes = path_to_incident + path_to_hospital[1:]
-                load_pct = _safe_division(h_data.get('load', 0), h_data.get('capacity', 1)); load_penalty = load_pct**2 * 20
-                total_score = total_eta * 0.8 + load_penalty * 0.2
-                options.append({"hospital": name, "eta_min": total_eta, "load_penalty": load_penalty, "load_pct": load_pct, "total_score": total_score, "path_nodes": full_path_nodes})
+                eta_to_incident = nx.astar_path_length(self.data_fabric.road_graph, amb_start_node, incident_node, heuristic=None, weight=cost_heuristic); path_to_incident = nx.astar_path(self.data_fabric.road_graph, amb_start_node, incident_node, heuristic=None, weight=cost_heuristic); eta_to_hospital = nx.astar_path_length(self.data_fabric.road_graph, incident_node, h_node, heuristic=None, weight=cost_heuristic); path_to_hospital = nx.astar_path(self.data_fabric.road_graph, incident_node, h_node, heuristic=None, weight=cost_heuristic); total_eta = eta_to_incident + eta_to_hospital; full_path_nodes = path_to_incident + path_to_hospital[1:]; load_pct = _safe_division(h_data.get('load', 0), h_data.get('capacity', 1)); load_penalty = load_pct**2 * 20; total_score = total_eta * 0.8 + load_penalty * 0.2; options.append({"hospital": name, "eta_min": total_eta, "load_penalty": load_penalty, "load_pct": load_pct, "total_score": total_score, "path_nodes": full_path_nodes})
             except nx.NetworkXNoPath: continue
         if not options: return {"error": "No valid hospital routes could be calculated."}
-        best_option = min(options, key=lambda x: x.get('total_score', float('inf')))
-        path_coords = [[self.data_fabric.road_graph.nodes[node]['pos'][1], self.data_fabric.road_graph.nodes[node]['pos'][0]] for node in best_option['path_nodes']]
-        return {"ambulance_unit": ambulance_unit, "best_hospital": best_option.get('hospital'), "routing_analysis": pd.DataFrame(options).drop(columns=['path_nodes']).sort_values('total_score').reset_index(drop=True), "route_path_coords": path_coords}
+        best_option = min(options, key=lambda x: x.get('total_score', float('inf'))); path_coords = [[self.data_fabric.road_graph.nodes[node]['pos'][1], self.data_fabric.road_graph.nodes[node]['pos'][0]] for node in best_option['path_nodes']]; return {"ambulance_unit": ambulance_unit, "best_hospital": best_option.get('hospital'), "routing_analysis": pd.DataFrame(options).drop(columns=['path_nodes']).sort_values('total_score').reset_index(drop=True), "route_path_coords": path_coords}
 
 # --- L2: PRESENTATION LAYER ---
-# (No changes needed in this section)
 def kpi_card(icon: str, title: str, value: Any, color: str):
     st.markdown(f"""<div style="background-color: #262730; border: 1px solid #444; border-radius: 10px; padding: 20px; text-align: center; height: 100%;"><div style="font-size: 40px;">{icon}</div><div style="font-size: 16px; color: #bbb; margin-top: 10px; text-transform: uppercase; font-weight: 600;">{title}</div><div style="font-size: 28px; font-weight: bold; color: {color};">{value}</div></div>""", unsafe_allow_html=True)
 def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_config):
     def get_hospital_color(load, capacity):
-        load_pct = _safe_division(load, capacity)
+        load_pct = _safe_division(load, capacity);
         if load_pct < 0.7: return style_config['colors']['hospital_ok']
         if load_pct < 0.9: return style_config['colors']['hospital_warn']
         return style_config['colors']['hospital_crit']
@@ -143,13 +126,9 @@ def create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, heatma
     layers = [heatmap_layer, zone_layer, hospital_layer, ambulance_layer, incident_layer]
     if route_info and "error" not in route_info and "route_path_coords" in route_info:
         layers.append(pdk.Layer('PathLayer', data=pd.DataFrame([{'path': route_info['route_path_coords']}]), get_path='path', get_width=5, get_color=style_config['colors']['route_path'], width_scale=1, width_min_pixels=5))
-    view_state = pdk.ViewState(latitude=32.525, longitude=-117.02, zoom=11.5, bearing=0, pitch=50)
-    tooltip = {"html": "<b>{name}</b><br/>{tooltip_text}", "style": {"backgroundColor": "#333", "color": "white", "border": "1px solid #555", "border-radius": "5px", "padding": "5px"}}
-    return pdk.Deck(layers=layers, initial_view_state=view_state, map_style="mapbox://styles/mapbox/dark-v10", tooltip=tooltip)
+    view_state = pdk.ViewState(latitude=32.525, longitude=-117.02, zoom=11.5, bearing=0, pitch=50); tooltip = {"html": "<b>{name}</b><br/>{tooltip_text}", "style": {"backgroundColor": "#333", "color": "white", "border": "1px solid #555", "border-radius": "5px", "padding": "5px"}}; return pdk.Deck(layers=layers, initial_view_state=view_state, map_style="mapbox://styles/mapbox/dark-v10", tooltip=tooltip)
 def display_ai_rationale(route_info: Dict):
-    st.subheader("AI Dispatch Rationale"); best = route_info['routing_analysis'].iloc[0]
-    st.success(f"**Recommended:** Dispatch `{route_info['ambulance_unit']}` to `{route_info['best_hospital']}`", icon="✅")
-    st.markdown(f"**Reason:** Optimal balance of lowest travel time and hospital readiness. The A* algorithm calculated a total risk-adjusted ETA of **{best.get('eta_min', 0):.1f} min** via the city's road network, while accounting for a hospital load penalty of `{best.get('load_penalty',0):.1f}`.")
+    st.subheader("AI Dispatch Rationale"); best = route_info['routing_analysis'].iloc[0]; st.success(f"**Recommended:** Dispatch `{route_info['ambulance_unit']}` to `{route_info['best_hospital']}`", icon="✅"); st.markdown(f"**Reason:** Optimal balance of lowest travel time and hospital readiness. The A* algorithm calculated a total risk-adjusted ETA of **{best.get('eta_min', 0):.1f} min** via the city's road network, while accounting for a hospital load penalty of `{best.get('load_penalty',0):.1f}`.")
     if len(route_info['routing_analysis']) > 1:
         rejected = route_info['routing_analysis'].iloc[1]; reasons = []
         if (rejected.get('eta_min', 0) / best.get('eta_min', 1)) > 1.15: reasons.append(f"a significantly longer ETA ({rejected.get('eta_min', 0):.1f} min)")
@@ -164,30 +143,22 @@ def main():
     if 'data_fabric' not in st.session_state: st.session_state.data_fabric = DataFusionFabric(config)
     if 'cognitive_engine' not in st.session_state: st.session_state.cognitive_engine = CognitiveEngine(st.session_state.data_fabric)
     data_fabric, engine = st.session_state.data_fabric, st.session_state.cognitive_engine
-    live_state = data_fabric.get_live_state()
-    risk_scores = engine.calculate_risk_scores(live_state)
-    all_incidents = [inc for zone_data in live_state.values() for inc in zone_data.get('active_incidents', [])]
+    live_state = data_fabric.get_live_state(); risk_scores = engine.calculate_risk_scores(live_state); all_incidents = [inc for zone_data in live_state.values() for inc in zone_data.get('active_incidents', [])]
     with st.sidebar:
-        st.title("RedShield AI"); st.write("Tijuana Emergency Intelligence")
-        tab_choice = st.radio("Navigation", ["Live Operations", "System Analytics", "Strategic Simulation"], label_visibility="collapsed")
-        st.divider()
+        st.title("RedShield AI"); st.write("Tijuana Emergency Intelligence"); tab_choice = st.radio("Navigation", ["Live Operations", "System Analytics", "Strategic Simulation"], label_visibility="collapsed"); st.divider();
         if st.button("🔄 Force Refresh Live Data", use_container_width=True): data_fabric.get_live_state.clear(); st.rerun()
         st.info("Map data is interactive. Click an incident to dispatch.")
-
     if tab_choice == "Live Operations":
-        kpi_cols = st.columns(3)
-        available_units = sum(1 for v in data_fabric.ambulances.values() if v.get('status') == 'Available')
-        avg_load = np.mean([_safe_division(h.get('load',0),h.get('capacity',1)) for h in data_fabric.hospitals.values()])
+        kpi_cols = st.columns(3); available_units = sum(1 for v in data_fabric.ambulances.values() if v.get('status') == 'Available'); avg_load = np.mean([_safe_division(h.get('load',0),h.get('capacity',1)) for h in data_fabric.hospitals.values()]);
         with kpi_cols[0]: kpi_card("🚑", "Units Available", f"{available_units}/{len(data_fabric.ambulances)}", "#00A9FF")
         with kpi_cols[1]: kpi_card("🏥", "Avg. Hospital Load", f"{avg_load:.0%}", "#FFB000")
         with kpi_cols[2]: kpi_card("🚨", "Active Incidents", len(all_incidents), "#DC3545")
-        st.divider()
-        map_col, ticket_col = st.columns((2.5, 1.5))
+        st.divider(); map_col, ticket_col = st.columns((2.5, 1.5))
         with map_col:
             zones_gdf, hosp_df, amb_df, inc_df, heat_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, config.get('styling', {}))
             deck = create_deck_gl_map(zones_gdf, hosp_df, amb_df, inc_df, heat_df, st.session_state.get('route_info'), config.get('styling', {}))
             
-            # --- SME FIX: Removed the invalid 'key' argument ---
+            # --- FINAL FIX: The 'key' argument is removed from this call ---
             clicked_state = st.pydeck_chart(deck, use_container_width=True)
             
             if clicked_state and clicked_state.picked_objects:
@@ -205,26 +176,19 @@ def main():
             if not st.session_state.get('selected_incident'): st.info("Click an incident on the map to generate a dispatch plan.")
             elif not st.session_state.get('route_info') or "error" in st.session_state.get('route_info'): st.error(f"Routing Error: {st.session_state.get('route_info', {}).get('error', 'Could not calculate a route.')}")
             else:
-                st.metric("Responding to Incident", st.session_state.selected_incident.get('id', 'N/A'))
-                display_ai_rationale(st.session_state.route_info)
+                st.metric("Responding to Incident", st.session_state.selected_incident.get('id', 'N/A')); display_ai_rationale(st.session_state.route_info)
                 with st.expander("Show Detailed Routing Analysis"): st.dataframe(st.session_state.route_info['routing_analysis'].set_index('hospital'))
-
     elif tab_choice == "System Analytics":
-        # ... (This section is correct, no changes needed)
         st.header("System-Wide Analytics & AI Insights"); forecast_col, feature_col = st.columns(2)
         with forecast_col:
-            st.subheader("24-Hour Probabilistic Demand Forecast")
+            st.subheader("24-Hour Probabilistic Demand Forecast");
             with st.spinner("Calculating 24-hour forecast..."):
                 future_hours = pd.date_range(start=datetime.now(), periods=24, freq='h'); forecast_data = []
                 for ts in future_hours:
-                    features = {"hour": ts.hour, "day_of_week": ts.weekday(), "is_quincena": ts.day in [14,15,16,29,30,31,1], 'temperature': 22, 'border_wait': 75}
-                    mean_pred = engine.predict_citywide_demand(features); std_dev = mean_pred * 0.10
-                    forecast_data.append({'time': ts, 'Predicted Calls': mean_pred, 'Upper Bound': mean_pred + 1.96 * std_dev, 'Lower Bound': np.maximum(0, mean_pred - 1.96 * std_dev)})
+                    features = {"hour": ts.hour, "day_of_week": ts.weekday(), "is_quincena": ts.day in [14,15,16,29,30,31,1], 'temperature': 22, 'border_wait': 75}; mean_pred = engine.predict_citywide_demand(features); std_dev = mean_pred * 0.10; forecast_data.append({'time': ts, 'Predicted Calls': mean_pred, 'Upper Bound': mean_pred + 1.96 * std_dev, 'Lower Bound': np.maximum(0, mean_pred - 1.96 * std_dev)})
                 st.area_chart(pd.DataFrame(forecast_data).set_index('time'))
         with feature_col:
-            st.subheader("Demand Model: Feature Importance (XAI)"); st.info("This chart shows which factors have the biggest impact on our call demand forecast. It's the 'why' behind the AI's prediction.")
-            feature_importance = pd.DataFrame({'feature': engine.model_features, 'importance': engine.demand_model.feature_importances_}).sort_values('importance', ascending=True)
-            st.bar_chart(feature_importance.set_index('feature'))
+            st.subheader("Demand Model: Feature Importance (XAI)"); st.info("This chart shows which factors have the biggest impact on our call demand forecast. It's the 'why' behind the AI's prediction."); feature_importance = pd.DataFrame({'feature': engine.model_features, 'importance': engine.demand_model.feature_importances_}).sort_values('importance', ascending=True); st.bar_chart(feature_importance.set_index('feature'))
         st.divider(); col1, col2 = st.columns(2)
         with col1:
             st.subheader("Hospital Load Status")
@@ -235,18 +199,13 @@ def main():
             if not patient_alerts: st.success("✅ No critical patient alerts at this time.")
             else:
                 for alert in patient_alerts: st.error(f"**Patient {alert.get('Patient ID')}:** HR: {alert.get('Heart Rate')}, O2: {alert.get('Oxygen %')}% | Unit: {alert.get('Ambulance')}", icon="❤️‍🩹")
-
     elif tab_choice == "Strategic Simulation":
-        # ... (This section is correct, no changes needed)
-        st.header("Strategic Simulation & 'What-If' Analysis"); st.info("Test system resilience by simulating extreme conditions.")
-        sim_traffic_spike = st.slider("Simulate City-Wide Traffic Multiplier", 1.0, 5.0, 1.0, 0.25)
-        st.warning("Running a simulation will use the current live incident map. A high number of incidents combined with a high traffic multiplier will show significant risk increases.")
+        st.header("Strategic Simulation & 'What-If' Analysis"); st.info("Test system resilience by simulating extreme conditions."); sim_traffic_spike = st.slider("Simulate City-Wide Traffic Multiplier", 1.0, 5.0, 1.0, 0.25); st.warning("Running a simulation will use the current live incident map. A high number of incidents combined with a high traffic multiplier will show significant risk increases.")
         if st.button("Run Simulation", use_container_width=True):
-            sim_risk_scores = {}
+            sim_risk_scores = {};
             for zone, s_data in data_fabric.zones.items():
                 l_data = live_state.get(zone, {}); sim_risk = (l_data.get('traffic', 0.5) * sim_traffic_spike * 0.6 + (1 - s_data.get('road_quality', 0.5)) * 0.2 + s_data.get('crime', 0.5) * 0.2); sim_risk_scores[zone] = sim_risk * (1 + len(l_data.get('active_incidents', [])))
-            st.subheader("Simulated Zonal Risk Scores"); st.bar_chart(pd.DataFrame.from_dict(sim_risk_scores, orient='index', columns=['Simulated Risk']).sort_values('Simulated Risk', ascending=False))
-            st.markdown("High-risk zones under these simulated conditions would require pre-emptive resource staging.")
+            st.subheader("Simulated Zonal Risk Scores"); st.bar_chart(pd.DataFrame.from_dict(sim_risk_scores, orient='index', columns=['Simulated Risk']).sort_values('Simulated Risk', ascending=False)); st.markdown("High-risk zones under these simulated conditions would require pre-emptive resource staging.")
 
 if __name__ == "__main__":
     main()
