@@ -112,6 +112,7 @@ class CognitiveEngine:
     def __init__(self, data_fabric: DataFusionFabric, model_config: Dict):
         self.data_fabric = data_fabric
         self.demand_model, self.model_features = self._train_demand_model(model_config)
+
     def _train_demand_model(self, model_config: Dict):
         print("--- Entrenando modelo de demanda (ejecutado una sola vez gracias a @st.cache_resource) ---")
         model_params = model_config.get('data', {}).get('model_params', {})
@@ -121,6 +122,7 @@ class CognitiveEngine:
         model = xgb.XGBRegressor(objective='reg:squarederror', **model_params, random_state=42, n_jobs=-1)
         model.fit(X_train, y_train)
         return model, list(X_train.columns)
+
     def predict_citywide_demand(self, features: Dict) -> float:
         input_df = pd.DataFrame([features], columns=self.model_features); return max(0, self.demand_model.predict(input_df)[0])
     def calculate_risk_scores(self, live_state: Dict) -> Dict:
@@ -206,6 +208,7 @@ def main():
     st.set_page_config(page_title="RedShield AI: Comando Élite", layout="wide", initial_sidebar_state="expanded")
     
     # Wrap the call to the cached function with the spinner.
+    # This is now safe because get_engine() contains no UI calls.
     with st.spinner("Inicializando el motor de IA por primera vez..."):
         engine = get_engine()
         
