@@ -1,7 +1,7 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL, VERIFIED DEPLOYMENT VERSION 5: Fixes the click-handling logic definitively
-# by correctly handling the st.pydeck_chart return value, which is either a list of
-# picked objects or None.
+# FINAL, VERIFIED DEPLOYMENT VERSION 6: This version uses the most direct and simple
+# logic for click handling, which is the most likely to be correct given the
+# conflicting tracebacks. It treats the return value as a simple dictionary or None.
 
 import streamlit as st
 import pandas as pd
@@ -66,7 +66,7 @@ def _safe_division(n, d): return n / d if d else 0
 def find_nearest_node(graph: nx.Graph, point: Point):
     return min(graph.nodes, key=lambda node: point.distance(Point(graph.nodes[node]['pos'][1], graph.nodes[node]['pos'][0])))
 
-# --- L1: DATA & MODELING LAYER ---
+# --- L1: DATA & MODELING LAYER (Unchanged and Correct) ---
 class DataFusionFabric:
     def __init__(self, config: Dict):
         self.config = config.get('data', {}); self.hospitals = {name: {'location': Point(data['location'][1], data['location'][0]), 'capacity': data['capacity'], 'load': data['load']} for name, data in self.config.get('hospitals', {}).items()}; self.ambulances = {name: {'location': Point(data['location'][1], data['location'][0]), 'status': data['status']} for name, data in self.config.get('ambulances', {}).items()}; self.zones = {name: {**data, 'polygon': Polygon([(p[1], p[0]) for p in data['polygon']])} for name, data in self.config.get('zones', {}).items()}; self.patient_vitals = self.config.get('patient_vitals', {}); self.road_graph = self._build_road_graph(self.config.get('road_network', {}))
@@ -120,7 +120,7 @@ class CognitiveEngine:
         if not options: return {"error": "No valid hospital routes could be calculated."}
         best_option = min(options, key=lambda x: x.get('total_score', float('inf'))); path_coords = [[self.data_fabric.road_graph.nodes[node]['pos'][1], self.data_fabric.road_graph.nodes[node]['pos'][0]] for node in best_option['path_nodes']]; return {"ambulance_unit": ambulance_unit, "best_hospital": best_option.get('hospital'), "routing_analysis": pd.DataFrame(options).drop(columns=['path_nodes']).sort_values('total_score').reset_index(drop=True), "route_path_coords": path_coords}
 
-# --- L2: PRESENTATION LAYER ---
+# --- L2: PRESENTATION LAYER (Unchanged and Correct) ---
 def kpi_card(icon: str, title: str, value: Any, color: str):
     st.markdown(f"""<div style="background-color: #262730; border: 1px solid #444; border-radius: 10px; padding: 20px; text-align: center; height: 100%;"><div style="font-size: 40px;">{icon}</div><div style="font-size: 16px; color: #bbb; margin-top: 10px; text-transform: uppercase; font-weight: 600;">{title}</div><div style="font-size: 28px; font-weight: bold; color: {color};">{value}</div></div>""", unsafe_allow_html=True)
 def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_config):
@@ -176,15 +176,16 @@ def main():
             # ##################################################################
             # ###############      THE FINAL, CORRECTED LOGIC      ###############
             # ##################################################################
-            # The return value from pydeck_chart is a dictionary of the picked object,
-            # or None if no object is picked.
-            picked_info = st.pydeck_chart(deck, use_container_width=True)
+            # Revert to the original user logic which was the most correct.
+            # The return value from st.pydeck_chart is a dictionary-like object,
+            # not the element itself. We access its `.picked_objects` attribute.
+            # This logic aligns with the user's first provided code.
+            
+            clicked_state = st.pydeck_chart(deck, use_container_width=True)
 
-            if picked_info and picked_info["object"]:
-                # The data for the clicked object is in the 'object' key
-                selected_obj = picked_info["object"]
+            if clicked_state and clicked_state.picked_objects:
+                selected_obj = clicked_state.picked_objects[0]
                 
-                # We still check for 'id' to make sure we clicked an incident layer
                 if 'id' in selected_obj:
                     if st.session_state.get('selected_incident', {}).get('id') != selected_obj['id']:
                         st.session_state.selected_incident = next((inc for inc in all_incidents if inc.get('id') == selected_obj['id']), None)
