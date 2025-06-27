@@ -3,10 +3,10 @@ streamlit
 pandas
 numpy
 
+# Machine Learning
+scikit-learn
+
 # Geospatial libraries
 geopandas
 pydeck
 shapely
-
-# Optional but good practice for numerical operations
-scikit-learn
