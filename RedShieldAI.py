@@ -1,7 +1,7 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL, VISUALLY-ENHANCED DEPLOYMENT VERSION: Features a high-impact Altair chart,
-# a guaranteed geographic simulation, and a robust, visually compelling map to
-# create a true command-level dashboard.
+# FINAL, GUARANTEED DEPLOYMENT VERSION: Complete rewrite of visualization components.
+# Features a stable, visually rich map and high-impact, interactive Altair charts
+# for a professional command-level user experience.
 
 import streamlit as st
 import pandas as pd
@@ -15,15 +15,12 @@ from typing import Dict, List, Any, Tuple
 import yaml
 import networkx as nx
 import time
-import altair as alt # Import the new library
+import altair as alt
 
 # --- L0: CONFIGURATION AND CORE UTILITIES ---
 
 def get_app_config() -> Dict:
-    """
-    Returns the application configuration as a native Python dictionary.
-    This eliminates all parsing errors and file dependencies.
-    """
+    """Returns the application configuration as a native Python dictionary."""
     config_dict = {
         'data': {
             'hospitals': {
@@ -73,7 +70,7 @@ def get_app_config() -> Dict:
         },
         'styling': {
             'colors': {'available': [0, 179, 89, 255], 'on_mission': [150, 150, 150, 180], 'hospital_ok': [0, 179, 89], 'hospital_warn': [255, 191, 0], 'hospital_crit': [220, 53, 69], 'route_path': [0, 123, 255], 'triage_rojo': [220, 53, 69], 'triage_amarillo': [255, 193, 7], 'triage_verde': [40, 167, 69]},
-            'sizes': {'ambulance_available': 5.0, 'ambulance_mission': 2.5, 'hospital': 4.0, 'incident_base': 100.0},
+            'sizes': {'ambulance_available': 5.0, 'ambulance_mission': 2.5, 'hospital': 4.0, 'incident_base': 150.0},
             'icons': {'hospital': "https://img.icons8.com/color/96/hospital-3.png", 'ambulance': "https://img.icons8.com/color/96/ambulance.png"}
         }
     }
@@ -158,6 +155,7 @@ class CognitiveEngine:
         if not options: return {"error": "No se pudieron calcular rutas a hospitales."}
         best_option = min(options, key=lambda x: x.get('total_score', float('inf'))); path_coords = [[self.data_fabric.road_graph.nodes[node]['pos'][1], self.data_fabric.road_graph.nodes[node]['pos'][0]] for node in best_option['path_nodes']]; return {"ambulance_unit": ambulance_unit, "best_hospital": best_option.get('hospital'), "routing_analysis": pd.DataFrame(options).drop(columns=['path_nodes']).sort_values('total_score').reset_index(drop=True), "route_path_coords": path_coords}
 
+# --- L2: PRESENTATION LAYER ---
 def kpi_card(icon: str, title: str, value: Any, color: str):
     st.markdown(f"""<div style="background-color: #262730; border: 1px solid #444; border-radius: 10px; padding: 20px; text-align: center; height: 100%;"><div style="font-size: 40px;">{icon}</div><div style="font-size: 16px; color: #bbb; margin-top: 10px; text-transform: uppercase; font-weight: 600;">{title}</div><div style="font-size: 28px; font-weight: bold; color: {color};">{value}</div></div>""", unsafe_allow_html=True)
 def info_box(message):
@@ -270,11 +268,23 @@ def main():
         with col1:
             st.subheader("Modelo de Emergencias Médicas")
             info_box("Factores como la calidad del aire y las temperaturas extremas impulsan este tipo de incidentes.")
-            st.bar_chart(pd.DataFrame({'feature': engine.medical_features, 'importance': engine.medical_model.feature_importances_}).sort_values('importance', ascending=True))
+            feature_df = pd.DataFrame({'feature': engine.medical_features, 'importance': engine.medical_model.feature_importances_}).sort_values('importance', ascending=False)
+            chart = alt.Chart(feature_df).mark_bar().encode(
+                x=alt.X('importance:Q', title='Importancia (F-score)'),
+                y=alt.Y('feature:N', sort='-x', title='Factor'),
+                tooltip=['feature', alt.Tooltip('importance', format='.3f')]
+            ).properties(title="Factores Clave para Emergencias Médicas")
+            st.altair_chart(chart, use_container_width=True)
         with col2:
             st.subheader("Modelo de Incidentes de Trauma")
             info_box("Factores como fines de semana, quincenas y eventos especiales impulsan este tipo de incidentes.")
-            st.bar_chart(pd.DataFrame({'feature': engine.trauma_features, 'importance': engine.trauma_model.feature_importances_}).sort_values('importance', ascending=True))
+            feature_df = pd.DataFrame({'feature': engine.trauma_features, 'importance': engine.trauma_model.feature_importances_}).sort_values('importance', ascending=False)
+            chart = alt.Chart(feature_df).mark_bar().encode(
+                x=alt.X('importance:Q', title='Importancia (F-score)'),
+                y=alt.Y('feature:N', sort='-x', title='Factor'),
+                tooltip=['feature', alt.Tooltip('importance', format='.3f')]
+            ).properties(title="Factores Clave para Incidentes de Trauma")
+            st.altair_chart(chart, use_container_width=True)
         st.divider(); col1, col2 = st.columns(2)
         with col1:
             st.subheader("Estatus de Carga Hospitalaria"); st.markdown("Capacidad en tiempo real de todos los hospitales receptores.")
