@@ -1,7 +1,7 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL, VERIFIED DEPLOYMENT VERSION 7: This version trusts the Python TypeError
-# and correctly CALLS the .picked_objects() function to retrieve the list of
-# clicked items, which is the only logical solution.
+# FINAL, ROBUST DEPLOYMENT VERSION: This version uses the standard Streamlit
+# state management pattern (`key` and `st.session_state`) to handle map clicks,
+# which is the definitive and correct way to build interactive apps.
 
 import streamlit as st
 import pandas as pd
@@ -174,28 +174,27 @@ def main():
             deck = create_deck_gl_map(zones_gdf, hosp_df, amb_df, inc_df, heat_df, st.session_state.get('route_info'), config.get('styling', {}))
             
             # ##################################################################
-            # ###############      THE FINAL, CORRECTED LOGIC      ###############
+            # ###############      THE FINAL, ROBUST SOLUTION      ###############
             # ##################################################################
-            # Trusting the Python `TypeError` as the ground truth.
-            # `clicked_state.picked_objects` is a function that must be called.
-            
-            clicked_state = st.pydeck_chart(deck, use_container_width=True)
+            # The component's return value is a dictionary with click info, or None.
+            # We assign a key to manage its state robustly.
+            st.pydeck_chart(deck, use_container_width=True, key="pydeck")
 
-            if clicked_state and hasattr(clicked_state, 'picked_objects'):
-                # The traceback says `picked_objects` is a function. We must call it.
-                picked_list = clicked_state.picked_objects()
-
-                if picked_list: # Check if the returned list is not empty
-                    selected_obj = picked_list[0]
-                    
-                    if 'id' in selected_obj:
-                        if st.session_state.get('selected_incident', {}).get('id') != selected_obj['id']:
-                            st.session_state.selected_incident = next((inc for inc in all_incidents if inc.get('id') == selected_obj['id']), None)
-                            if st.session_state.selected_incident:
-                                st.session_state.route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, risk_scores)
-                            else: 
-                                st.session_state.route_info = None
-                            st.rerun()
+            # We check st.session_state for the value associated with our key.
+            if st.session_state.pydeck and st.session_state.pydeck["object"]:
+                selected_obj = st.session_state.pydeck["object"]
+                
+                if 'id' in selected_obj:
+                    if st.session_state.get('selected_incident', {}).get('id') != selected_obj['id']:
+                        st.session_state.selected_incident = next((inc for inc in all_incidents if inc.get('id') == selected_obj['id']), None)
+                        if st.session_state.selected_incident:
+                            st.session_state.route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, risk_scores)
+                        else: 
+                            st.session_state.route_info = None
+                        
+                        # Clear the click state to prevent re-triggering on other reruns
+                        st.session_state.pydeck = None 
+                        st.rerun()
             # ##################################################################
             # ###############   END OF THE DEFINITIVE FIX SECTION   ##############
             # ##################################################################
