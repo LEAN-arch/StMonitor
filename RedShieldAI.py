@@ -9,7 +9,7 @@ import geopandas as gpd
 from shapely.geometry import Point, Polygon, LineString
 import pydeck as pdk
 from sklearn.ensemble import RandomForestRegressor
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Any
 import yaml
 
@@ -51,7 +51,8 @@ class CognitiveEngine:
     def _get_demand_model(_self) -> tuple:
         """Trains and caches a sophisticated city-wide demand forecasting model."""
         hours = 24 * 90
-        timestamps = pd.to_datetime(pd.date_range(start='2024-01-01', periods=hours, freq='H'))
+        # BUG FIX: Changed deprecated 'H' to 'h' for hourly frequency.
+        timestamps = pd.to_datetime(pd.date_range(start='2024-01-01', periods=hours, freq='h'))
         X_train = pd.DataFrame({'hour': timestamps.hour, 'day_of_week': timestamps.dayofweek, 'is_quincena': timestamps.day.isin([14,15,16,29,30,31,1]), 'temperature': np.random.normal(22, 5, hours), 'border_wait': np.random.randint(20, 120, hours)})
         y_train = np.maximum(0, 5 + 3 * np.sin(X_train['hour'] * 2 * np.pi / 24) + X_train['is_quincena'] * 5 + X_train['border_wait']/20 + np.random.randn(hours)).astype(int)
         model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
@@ -108,6 +109,7 @@ class CognitiveEngine:
 
 # --- L2: PRESENTATION LAYER ---
 def kpi_card(icon: str, title: str, value: Any, color: str):
+    """Renders a robust, high-impact KPI card using HTML/CSS."""
     st.markdown(f"""
     <div style="background-color: #FFFFFF; border: 1px solid #E0E0E0; border-radius: 10px; padding: 20px; text-align: center; height: 100%;">
         <div style="font-size: 40px;">{icon}</div>
@@ -197,11 +199,11 @@ def main():
         with map_col:
             zones_gdf, hospital_df, ambulance_df, incident_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, config.get('styling', {}))
             
-            # BUG FIX: Replaced the failing `on_select` parameter and now check the return value correctly.
-            # The return value is a dictionary, not an object.
+            # BUG FIX: The `on_select` parameter is removed. The return value is checked robustly.
             clicked_state = st.pydeck_chart(create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, st.session_state.get('route_info'), config.get('styling', {})), key="deck_map")
             
-            if clicked_state and clicked_state.get("picked_objects"):
+            # BUG FIX: This is the correct, robust way to handle the returned state from PyDeck.
+            if clicked_state and clicked_state["picked_objects"]:
                 selected_obj = clicked_state["picked_objects"][0]
                 if selected_obj and 'id' in selected_obj:
                     if st.session_state.get('selected_incident', {}).get('id') != selected_obj['id']:
@@ -224,7 +226,7 @@ def main():
         st.header("System-Wide Analytics")
         st.subheader("24-Hour Probabilistic Demand Forecast")
         with st.spinner("Calculating 24-hour forecast..."):
-            future_hours = pd.date_range(start=datetime.now(), periods=24, freq='H'); forecast_data = []
+            future_hours = pd.date_range(start=datetime.now(), periods=24, freq='h'); forecast_data = []
             for ts in future_hours:
                 features = {"hour": ts.hour, "day_of_week": ts.weekday(), "is_quincena": ts.day in [14,15,16,29,30,31,1], 'temperature': 22, 'border_wait': 75}
                 mean_pred = engine.predict_citywide_demand(features); std_dev = mean_pred * 0.15
@@ -255,7 +257,5 @@ def main():
                 sim_risk_scores[zone] = sim_risk * (1 + len(l_data.get('active_incidents', [])))
             st.subheader("Simulated Zonal Risk"); st.bar_chart(pd.DataFrame.from_dict(sim_risk_scores, orient='index', columns=['Simulated Risk']).sort_values('Simulated Risk', ascending=False))
 
-if __name__ == "__main__":
-    main()
 if __name__ == "__main__":
     main()
