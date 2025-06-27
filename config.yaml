@@ -1,4 +1,3 @@
-# Configuration as Data: Easily update the system without touching Python code.
 data:
   hospitals:
     "Hospital General": { location: [32.5295, -117.0182], capacity: 100, load: 85 }
@@ -15,12 +14,11 @@ data:
 
 styling:
   colors:
-    primary: "#00a0ff"
-    available: [0, 255, 127, 255]      # Bright Green
-    on_mission: [128, 128, 128, 180]    # Grey
-    hospital_ok: [0, 255, 127, 255]    # Green
-    hospital_warn: [255, 191, 0, 255] # Yellow
-    hospital_crit: [255, 0, 0, 255]    # Red
+    available: [0, 255, 127, 255]
+    on_mission: [128, 128, 128, 180]
+    hospital_ok: [0, 255, 127, 255]
+    hospital_warn: [255, 191, 0, 255]
+    hospital_crit: [255, 0, 0, 255]
     incident_halo: [255, 80, 80]
     route_path: [251, 192, 45]
   sizes:
