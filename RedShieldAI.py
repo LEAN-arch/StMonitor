@@ -1,7 +1,7 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL, ROBUST DEPLOYMENT VERSION 9: This version completely removes the problematic
-# map-click logic and replaces it with a standard, reliable st.selectbox for incident
-# selection. This is the guaranteed working pattern.
+# FINAL, ROBUST DEPLOYMENT VERSION 10: Implements a standard callback-driven
+# state management pattern for the dropdown, which is the most reliable method
+# in Streamlit. This guarantees correct behavior on user selection.
 
 import streamlit as st
 import pandas as pd
@@ -18,7 +18,7 @@ import os
 import json
 import time
 
-# --- L0: CONFIGURATION, PATHS, AND SELF-SETUP (Unchanged) ---
+# --- L0: CONFIGURATION, PATHS, AND SELF-SETUP ---
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, 'config.yaml')
 MODEL_FILE = os.path.join(SCRIPT_DIR, 'demand_model.xgb')
@@ -136,6 +136,7 @@ def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_co
     max_risk = max(1, zones_gdf['risk'].max()); zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [220, 53, 69, int(200 * _safe_division(r,max_risk))]).tolist()
     return zones_gdf, hospital_df, ambulance_df, incident_df, heatmap_df
 def create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, heatmap_df, route_info=None, style_config=None):
+    # This map is now for visualization only. 'pickable' is still useful for tooltips.
     zone_layer = pdk.Layer("PolygonLayer", data=zones_gdf, get_polygon="geometry", filled=True, stroked=False, extruded=True, get_elevation="risk * 3000", get_fill_color="fill_color", opacity=0.1, pickable=True); hospital_layer = pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style_config['sizes']['hospital'], get_color='color', size_scale=15, pickable=True); ambulance_layer = pdk.Layer("IconLayer", data=ambulance_df, get_icon="icon_data", get_position='[lon, lat]', get_size='size', get_color='color', size_scale=15, pickable=True); incident_layer = pdk.Layer("ScatterplotLayer", data=incident_df, get_position='[lon, lat]', get_radius='size*20', get_fill_color=style_config['colors']['incident_halo'], pickable=True, radius_min_pixels=5, stroked=True, get_line_width=100, get_line_color=[*style_config['colors']['incident_halo'], 100]); heatmap_layer = pdk.Layer("HeatmapLayer", data=heatmap_df, get_position='[lon, lat]', opacity=0.3, aggregation='"MEAN"', threshold=0.1, get_weight=1); layers = [heatmap_layer, zone_layer, hospital_layer, ambulance_layer, incident_layer]
     if route_info and "error" not in route_info and "route_path_coords" in route_info:
         layers.append(pdk.Layer('PathLayer', data=pd.DataFrame([{'path': route_info['route_path_coords']}]), get_path='path', get_width=5, get_color=style_config['colors']['route_path'], width_scale=1, width_min_pixels=5))
@@ -152,16 +153,44 @@ def display_ai_rationale(route_info: Dict):
 # --- L3: MAIN APPLICATION ---
 def main():
     st.set_page_config(page_title="RedShield AI: Elite Command", layout="wide", initial_sidebar_state="expanded")
+    
+    # Initialize stateful objects
     config = load_config(CONFIG_FILE)
     if 'cognitive_engine' not in st.session_state:
         st.session_state.cognitive_engine = CognitiveEngine(DataFusionFabric(config))
     engine = st.session_state.cognitive_engine
     data_fabric = engine.data_fabric
-    live_state = data_fabric.get_live_state(); risk_scores = engine.calculate_risk_scores(live_state); all_incidents = [inc for zone_data in live_state.values() for inc in zone_data.get('active_incidents', [])]
+
+    # Get live data for this run
+    live_state = data_fabric.get_live_state()
+    risk_scores = engine.calculate_risk_scores(live_state)
+    all_incidents = [inc for zone_data in live_state.values() for inc in zone_data.get('active_incidents', [])]
+    
+    # Map incident IDs to the incident data for easy lookup
+    incident_dict = {i['id']: i for i in all_incidents}
+
+    # ##################################################################
+    # ###############     ROBUST CALLBACK-BASED LOGIC      ###############
+    # ##################################################################
+    def handle_incident_selection():
+        """This function is called when the user selects an incident from the dropdown."""
+        selected_id = st.session_state.incident_selector # Get the selected ID
+        if selected_id:
+            # If an ID is selected, find the incident and calculate the route
+            st.session_state.selected_incident = incident_dict.get(selected_id)
+            st.session_state.route_info = engine.find_best_route_for_incident(
+                st.session_state.selected_incident, risk_scores
+            )
+        else:
+            # If the user deselects (chooses placeholder), clear the info
+            st.session_state.selected_incident = None
+            st.session_state.route_info = None
+
     with st.sidebar:
         st.title("RedShield AI"); st.write("Tijuana Emergency Intelligence"); tab_choice = st.radio("Navigation", ["Live Operations", "System Analytics", "Strategic Simulation"], label_visibility="collapsed"); st.divider();
         if st.button("🔄 Force Refresh Live Data", use_container_width=True): data_fabric.get_live_state.clear(); st.rerun()
         st.info("Select an incident from the dropdown in the right panel to generate a dispatch plan.")
+        
     if tab_choice == "Live Operations":
         kpi_cols = st.columns(3); available_units = sum(1 for v in data_fabric.ambulances.values() if v.get('status') == 'Available'); avg_load = np.mean([_safe_division(h.get('load',0),h.get('capacity',1)) for h in data_fabric.hospitals.values()]);
         with kpi_cols[0]: kpi_card("🚑", "Units Available", f"{available_units}/{len(data_fabric.ambulances)}", "#00A9FF")
@@ -169,58 +198,36 @@ def main():
         with kpi_cols[2]: kpi_card("🚨", "Active Incidents", len(all_incidents), "#DC3545")
         st.divider(); map_col, ticket_col = st.columns((2.5, 1.5))
         
-        # ##################################################################
-        # ###############      THE FINAL, ROBUST SOLUTION      ###############
-        # ##################################################################
-        
-        # --- Handle Incident Selection via a reliable Dropdown ---
         with ticket_col:
             st.subheader("Dispatch Ticket")
             
-            # Create a list of incident IDs for the user to select from.
-            incident_options = {f"{i['id']} (Priority {i['priority']})": i for i in all_incidents}
-            
-            # Use st.selectbox, a standard and reliable widget.
-            selected_option = st.selectbox(
-                "Select an Active Incident:", 
-                options=list(incident_options.keys()),
-                index=None, # Defaults to nothing selected
-                placeholder="Choose an incident..."
+            # Use st.selectbox with the on_change callback for reliable state handling.
+            st.selectbox(
+                "Select an Active Incident:",
+                options=[None] + list(incident_dict.keys()), # Add None for a placeholder
+                format_func=lambda x: "Choose an incident..." if x is None else f"{x} (Priority {incident_dict[x]['priority']})",
+                key="incident_selector", # The key that links to st.session_state
+                on_change=handle_incident_selection,
             )
 
-            # If the user has made a selection, process it.
-            if selected_option:
-                st.session_state.selected_incident = incident_options[selected_option]
-                st.session_state.route_info = engine.find_best_route_for_incident(
-                    st.session_state.selected_incident, risk_scores
-                )
+            # The rest of the UI is now declarative: it just displays what's in the state.
+            if st.session_state.get('selected_incident'):
+                if st.session_state.get('route_info') and "error" not in st.session_state.route_info:
+                    st.metric("Responding to Incident", st.session_state.selected_incident.get('id', 'N/A'))
+                    display_ai_rationale(st.session_state.route_info)
+                    with st.expander("Show Detailed Routing Analysis"):
+                        st.dataframe(st.session_state.route_info['routing_analysis'].set_index('hospital'))
+                else:
+                    st.error(f"Routing Error: {st.session_state.get('route_info', {}).get('error', 'Could not calculate a route.')}")
             else:
-                # If nothing is selected, clear the state.
-                st.session_state.selected_incident = None
-                st.session_state.route_info = None
-
-            # --- Display the results based on the selection ---
-            if not st.session_state.get('selected_incident'):
                 st.info("Select an incident from the dropdown above to generate a dispatch plan.")
-            elif not st.session_state.get('route_info') or "error" in st.session_state.get('route_info'):
-                st.error(f"Routing Error: {st.session_state.get('route_info', {}).get('error', 'Could not calculate a route.')}")
-            else:
-                st.metric("Responding to Incident", st.session_state.selected_incident.get('id', 'N/A'))
-                display_ai_rationale(st.session_state.route_info)
-                with st.expander("Show Detailed Routing Analysis"):
-                    st.dataframe(st.session_state.route_info['routing_analysis'].set_index('hospital'))
-
-        # --- Display the Map (Visualization only) ---
+        
         with map_col:
             zones_gdf, hosp_df, amb_df, inc_df, heat_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, config.get('styling', {}))
-            # The route_info from the selection is passed to the map for drawing.
             deck = create_deck_gl_map(zones_gdf, hosp_df, amb_df, inc_df, heat_df, st.session_state.get('route_info'), config.get('styling', {}))
             st.pydeck_chart(deck, use_container_width=True)
 
-    # ##################################################################
-    # ###############   END OF THE DEFINITIVE FIX SECTION   ##############
-    # ##################################################################
-    
+    # ... (Rest of the app is unchanged) ...
     elif tab_choice == "System Analytics":
         st.header("System-Wide Analytics & AI Insights"); forecast_col, feature_col = st.columns(2)
         with forecast_col:
