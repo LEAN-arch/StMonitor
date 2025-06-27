@@ -9,7 +9,7 @@ import geopandas as gpd
 from shapely.geometry import Point, Polygon, LineString
 import pydeck as pdk
 from sklearn.ensemble import RandomForestRegressor
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Any
 import yaml
 
@@ -176,7 +176,5 @@ def main():
             for zone, s_data in data_fabric.zones.items(): l_data = sim_state.get(zone, {}); sim_risk = (l_data.get('traffic', 0.5) * sim_traffic_spike * 0.6 + (1-s_data.get('road_quality',0.5))*0.2); sim_risk_scores[zone] = sim_risk * (1 + len(l_data.get('active_incidents', [])))
             st.subheader("Simulated Zonal Risk"); st.bar_chart(pd.DataFrame.from_dict(sim_risk_scores, orient='index', columns=['Simulated Risk']).sort_values('Simulated Risk', ascending=False))
 
-if __name__ == "__main__":
-    main()
 if __name__ == "__main__":
     main()
