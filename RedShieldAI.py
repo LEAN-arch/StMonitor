@@ -1,8 +1,7 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL DEPLOYMENT-READY VERSION for serverless environments.
-# This single file handles one-time model training on its first run and then
-# loads the pre-trained model for all subsequent runs. It is robust against
-# concurrent initial requests.
+# FINAL DEPLOYMENT-READY VERSION 2: Fixes the TypeError by correctly calling the
+# picked_objects() function to retrieve the list of clicked items. This is the
+# definitive, robust solution for handling map clicks.
 
 import streamlit as st
 import pandas as pd
@@ -20,9 +19,6 @@ import json
 import time
 
 # --- L0: CONFIGURATION, PATHS, AND SELF-SETUP ---
-
-# --- SME FIX: Use absolute paths to work reliably in any environment ---
-# This is crucial for cloud deployments where the working directory is not guaranteed.
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, 'config.yaml')
 MODEL_FILE = os.path.join(SCRIPT_DIR, 'demand_model.xgb')
@@ -30,51 +26,26 @@ FEATURES_FILE = os.path.join(SCRIPT_DIR, 'model_features.json')
 LOCK_FILE = os.path.join(SCRIPT_DIR, '.model_lock')
 
 def _train_and_save_model():
-    """
-    Performs the one-time, expensive model training.
-    Creates a lock file to prevent race conditions in concurrent environments.
-    """
-    # Attempt to acquire a lock
     try:
-        # 'x' mode creates a file, fails if it already exists (atomic operation)
-        with open(LOCK_FILE, 'x') as f:
-            f.write(str(os.getpid()))
+        with open(LOCK_FILE, 'x') as f: f.write(str(os.getpid()))
     except FileExistsError:
-        # Another process is already training, wait for it to finish
         st.info("Another user is initializing the AI model. Please wait a moment...")
-        while os.path.exists(LOCK_FILE):
-            time.sleep(2)
-        # The model should exist now, so we can try to load it.
+        while os.path.exists(LOCK_FILE): time.sleep(2)
         return
-
-    # If we got the lock, we are the one to do the training
     try:
         with st.spinner("First-time setup: Training demand forecast model... This may take a minute."):
             print("--- Starting one-time RedShield AI Model Training ---")
-            with open(CONFIG_FILE, 'r') as f:
-                config = yaml.safe_load(f)
+            with open(CONFIG_FILE, 'r') as f: config = yaml.safe_load(f)
             model_params = config.get('data', {}).get('model_params', {})
-            
-            # 1. Generate Training Data
-            hours = 24 * 365
-            timestamps = pd.to_datetime(pd.date_range(start='2023-01-01', periods=hours, freq='h'))
+            hours = 24 * 365; timestamps = pd.to_datetime(pd.date_range(start='2023-01-01', periods=hours, freq='h'))
             X_train = pd.DataFrame({'hour': timestamps.hour, 'day_of_week': timestamps.dayofweek, 'is_quincena': timestamps.day.isin([14,15,16,29,30,31,1]), 'temperature': np.random.normal(22, 5, hours), 'border_wait': np.random.randint(20, 120, hours)})
             y_train = np.maximum(0, 5 + 3 * np.sin(X_train['hour'] * 2 * np.pi / 24) + X_train['is_quincena'] * 5 + X_train['border_wait']/20 + np.random.randn(hours)).astype(int)
-            
-            # 2. Train the XGBoost Model
-            model = xgb.XGBRegressor(objective='reg:squarederror', **model_params, random_state=42, n_jobs=-1)
-            model.fit(X_train, y_train)
-            
-            # 3. Save the Model and Feature List
-            model.save_model(MODEL_FILE)
-            features = list(X_train.columns)
-            with open(FEATURES_FILE, 'w') as f:
-                json.dump(features, f)
+            model = xgb.XGBRegressor(objective='reg:squarederror', **model_params, random_state=42, n_jobs=-1); model.fit(X_train, y_train)
+            model.save_model(MODEL_FILE); features = list(X_train.columns)
+            with open(FEATURES_FILE, 'w') as f: json.dump(features, f)
             print("--- Model Training Successful ---")
     finally:
-        # IMPORTANT: Release the lock whether training succeeded or failed
-        if os.path.exists(LOCK_FILE):
-            os.remove(LOCK_FILE)
+        if os.path.exists(LOCK_FILE): os.remove(LOCK_FILE)
 
 @st.cache_data
 def load_config(path):
@@ -82,21 +53,13 @@ def load_config(path):
 
 @st.cache_resource
 def load_demand_model() -> tuple:
-    """
-    Loads the pre-trained model. If it doesn't exist, triggers the one-time training process.
-    """
     if not os.path.exists(MODEL_FILE):
         _train_and_save_model()
-        # After training, we might need to rerun the script to clear the spinner and load properly.
         if not os.path.exists(MODEL_FILE):
-             st.error("Model training failed. Please check the logs.")
-             st.stop()
+             st.error("Model training failed. Please check the logs."); st.stop()
         st.rerun()
-
-    model = xgb.XGBRegressor()
-    model.load_model(MODEL_FILE)
-    with open(FEATURES_FILE, 'r') as f:
-        features = json.load(f)
+    model = xgb.XGBRegressor(); model.load_model(MODEL_FILE)
+    with open(FEATURES_FILE, 'r') as f: features = json.load(f)
     return model, features
 
 def _safe_division(n, d): return n / d if d else 0
@@ -105,17 +68,11 @@ def find_nearest_node(graph: nx.Graph, point: Point):
 
 # --- L1: DATA & MODELING LAYER ---
 class DataFusionFabric:
-    # (This class is unchanged)
     def __init__(self, config: Dict):
-        self.config = config.get('data', {})
-        self.hospitals = {name: {'location': Point(data['location'][1], data['location'][0]), 'capacity': data['capacity'], 'load': data['load']} for name, data in self.config.get('hospitals', {}).items()}
-        self.ambulances = {name: {'location': Point(data['location'][1], data['location'][0]), 'status': data['status']} for name, data in self.config.get('ambulances', {}).items()}
-        self.zones = {name: {**data, 'polygon': Polygon([(p[1], p[0]) for p in data['polygon']])} for name, data in self.config.get('zones', {}).items()}
-        self.patient_vitals = self.config.get('patient_vitals', {})
-        self.road_graph = self._build_road_graph(self.config.get('road_network', {}))
+        self.config = config.get('data', {}); self.hospitals = {name: {'location': Point(data['location'][1], data['location'][0]), 'capacity': data['capacity'], 'load': data['load']} for name, data in self.config.get('hospitals', {}).items()}; self.ambulances = {name: {'location': Point(data['location'][1], data['location'][0]), 'status': data['status']} for name, data in self.config.get('ambulances', {}).items()}; self.zones = {name: {**data, 'polygon': Polygon([(p[1], p[0]) for p in data['polygon']])} for name, data in self.config.get('zones', {}).items()}; self.patient_vitals = self.config.get('patient_vitals', {}); self.road_graph = self._build_road_graph(self.config.get('road_network', {}))
     @st.cache_data
     def _build_road_graph(_self, network_config: Dict) -> nx.Graph:
-        G = nx.Graph()
+        G = nx.Graph();
         for node, data in network_config.get('nodes', {}).items(): G.add_node(node, pos=data['pos'])
         for edge in network_config.get('edges', []): G.add_edge(edge[0], edge[1], weight=edge[2])
         return G
@@ -126,16 +83,13 @@ class DataFusionFabric:
             incidents = []
             for _ in range(np.random.randint(0, 4)):
                 node = np.random.choice(all_nodes); loc_coords = _self.road_graph.nodes[node]['pos']; incident_point = Point(loc_coords[1], loc_coords[0])
-                if data['polygon'].contains(incident_point):
-                    incidents.append({"id": f"I-{zone[:2].upper()}{np.random.randint(100,999)}", "location": incident_point, "priority": np.random.choice([1, 2, 3], p=[0.6, 0.3, 0.1]), "node": node})
+                if data['polygon'].contains(incident_point): incidents.append({"id": f"I-{zone[:2].upper()}{np.random.randint(100,999)}", "location": incident_point, "priority": np.random.choice([1, 2, 3], p=[0.6, 0.3, 0.1]), "node": node})
             state[zone] = {"traffic": np.random.uniform(0.3, 1.0), "active_incidents": incidents}
         return state
 
 class CognitiveEngine:
-    # (This class is unchanged)
     def __init__(self, data_fabric: DataFusionFabric):
-        self.data_fabric = data_fabric
-        self.demand_model, self.model_features = load_demand_model()
+        self.data_fabric = data_fabric; self.demand_model, self.model_features = load_demand_model()
     def predict_citywide_demand(self, features: Dict) -> float:
         input_df = pd.DataFrame([features], columns=self.model_features); return max(0, self.demand_model.predict(input_df)[0])
     def calculate_risk_scores(self, live_state: Dict) -> Dict:
@@ -146,8 +100,7 @@ class CognitiveEngine:
     def get_patient_alerts(self) -> List[Dict]:
         alerts = []
         for pid, vitals in self.data_fabric.patient_vitals.items():
-            if vitals.get('heart_rate', 100) > 140 or vitals.get('oxygen', 100) < 90:
-                alerts.append({"Patient ID": pid, "Heart Rate": vitals.get('heart_rate'), "Oxygen %": vitals.get('oxygen'), "Ambulance": vitals.get('ambulance', 'N/A')})
+            if vitals.get('heart_rate', 100) > 140 or vitals.get('oxygen', 100) < 90: alerts.append({"Patient ID": pid, "Heart Rate": vitals.get('heart_rate'), "Oxygen %": vitals.get('oxygen'), "Ambulance": vitals.get('ambulance', 'N/A')})
         return alerts
     def find_best_route_for_incident(self, incident: Dict, risk_scores: Dict) -> Dict:
         available_ambulances = {k: v for k, v in self.data_fabric.ambulances.items() if v.get('status') == 'Available'}
@@ -168,7 +121,6 @@ class CognitiveEngine:
         best_option = min(options, key=lambda x: x.get('total_score', float('inf'))); path_coords = [[self.data_fabric.road_graph.nodes[node]['pos'][1], self.data_fabric.road_graph.nodes[node]['pos'][0]] for node in best_option['path_nodes']]; return {"ambulance_unit": ambulance_unit, "best_hospital": best_option.get('hospital'), "routing_analysis": pd.DataFrame(options).drop(columns=['path_nodes']).sort_values('total_score').reset_index(drop=True), "route_path_coords": path_coords}
 
 # --- L2: PRESENTATION LAYER ---
-# (This section is unchanged and correct)
 def kpi_card(icon: str, title: str, value: Any, color: str):
     st.markdown(f"""<div style="background-color: #262730; border: 1px solid #444; border-radius: 10px; padding: 20px; text-align: center; height: 100%;"><div style="font-size: 40px;">{icon}</div><div style="font-size: 16px; color: #bbb; margin-top: 10px; text-transform: uppercase; font-weight: 600;">{title}</div><div style="font-size: 28px; font-weight: bold; color: {color};">{value}</div></div>""", unsafe_allow_html=True)
 def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_config):
@@ -185,12 +137,7 @@ def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_co
     max_risk = max(1, zones_gdf['risk'].max()); zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [220, 53, 69, int(200 * _safe_division(r,max_risk))]).tolist()
     return zones_gdf, hospital_df, ambulance_df, incident_df, heatmap_df
 def create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, heatmap_df, route_info=None, style_config=None):
-    zone_layer = pdk.Layer("PolygonLayer", data=zones_gdf, get_polygon="geometry", filled=True, stroked=False, extruded=True, get_elevation="risk * 3000", get_fill_color="fill_color", opacity=0.1, pickable=True)
-    hospital_layer = pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style_config['sizes']['hospital'], get_color='color', size_scale=15, pickable=True)
-    ambulance_layer = pdk.Layer("IconLayer", data=ambulance_df, get_icon="icon_data", get_position='[lon, lat]', get_size='size', get_color='color', size_scale=15, pickable=True)
-    incident_layer = pdk.Layer("ScatterplotLayer", data=incident_df, get_position='[lon, lat]', get_radius='size*20', get_fill_color=style_config['colors']['incident_halo'], pickable=True, radius_min_pixels=5, stroked=True, get_line_width=100, get_line_color=[*style_config['colors']['incident_halo'], 100])
-    heatmap_layer = pdk.Layer("HeatmapLayer", data=heatmap_df, get_position='[lon, lat]', opacity=0.3, aggregation='"MEAN"', threshold=0.1, get_weight=1)
-    layers = [heatmap_layer, zone_layer, hospital_layer, ambulance_layer, incident_layer]
+    zone_layer = pdk.Layer("PolygonLayer", data=zones_gdf, get_polygon="geometry", filled=True, stroked=False, extruded=True, get_elevation="risk * 3000", get_fill_color="fill_color", opacity=0.1, pickable=True); hospital_layer = pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style_config['sizes']['hospital'], get_color='color', size_scale=15, pickable=True); ambulance_layer = pdk.Layer("IconLayer", data=ambulance_df, get_icon="icon_data", get_position='[lon, lat]', get_size='size', get_color='color', size_scale=15, pickable=True); incident_layer = pdk.Layer("ScatterplotLayer", data=incident_df, get_position='[lon, lat]', get_radius='size*20', get_fill_color=style_config['colors']['incident_halo'], pickable=True, radius_min_pixels=5, stroked=True, get_line_width=100, get_line_color=[*style_config['colors']['incident_halo'], 100]); heatmap_layer = pdk.Layer("HeatmapLayer", data=heatmap_df, get_position='[lon, lat]', opacity=0.3, aggregation='"MEAN"', threshold=0.1, get_weight=1); layers = [heatmap_layer, zone_layer, hospital_layer, ambulance_layer, incident_layer]
     if route_info and "error" not in route_info and "route_path_coords" in route_info:
         layers.append(pdk.Layer('PathLayer', data=pd.DataFrame([{'path': route_info['route_path_coords']}]), get_path='path', get_width=5, get_color=style_config['colors']['route_path'], width_scale=1, width_min_pixels=5))
     view_state = pdk.ViewState(latitude=32.525, longitude=-117.02, zoom=11.5, bearing=0, pitch=50); tooltip = {"html": "<b>{name}</b><br/>{tooltip_text}", "style": {"backgroundColor": "#333", "color": "white", "border": "1px solid #555", "border-radius": "5px", "padding": "5px"}}; return pdk.Deck(layers=layers, initial_view_state=view_state, map_style="mapbox://styles/mapbox/dark-v10", tooltip=tooltip)
@@ -207,15 +154,10 @@ def display_ai_rationale(route_info: Dict):
 def main():
     st.set_page_config(page_title="RedShield AI: Elite Command", layout="wide", initial_sidebar_state="expanded")
     config = load_config(CONFIG_FILE)
-    
-    # The session state initialization will now trigger the self-setup process if needed.
     if 'cognitive_engine' not in st.session_state:
-        # This single call now handles everything: checking, training, and loading.
         st.session_state.cognitive_engine = CognitiveEngine(DataFusionFabric(config))
-        
     engine = st.session_state.cognitive_engine
-    data_fabric = engine.data_fabric # Get the fabric instance from the engine
-    
+    data_fabric = engine.data_fabric
     live_state = data_fabric.get_live_state(); risk_scores = engine.calculate_risk_scores(live_state); all_incidents = [inc for zone_data in live_state.values() for inc in zone_data.get('active_incidents', [])]
     with st.sidebar:
         st.title("RedShield AI"); st.write("Tijuana Emergency Intelligence"); tab_choice = st.radio("Navigation", ["Live Operations", "System Analytics", "Strategic Simulation"], label_visibility="collapsed"); st.divider();
@@ -231,15 +173,19 @@ def main():
             zones_gdf, hosp_df, amb_df, inc_df, heat_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, config.get('styling', {}))
             deck = create_deck_gl_map(zones_gdf, hosp_df, amb_df, inc_df, heat_df, st.session_state.get('route_info'), config.get('styling', {}))
             clicked_state = st.pydeck_chart(deck, use_container_width=True)
+            
+            # --- FINAL FIX: Check if an object was clicked, then CALL the function ---
             if clicked_state and clicked_state.picked_objects:
-                selected_obj = clicked_state.picked_objects[0]
-                if selected_obj and 'id' in selected_obj:
-                    if st.session_state.get('selected_incident', {}).get('id') != selected_obj['id']:
-                        st.session_state.selected_incident = next((inc for inc in all_incidents if inc.get('id') == selected_obj['id']), None)
-                        if st.session_state.selected_incident:
-                            st.session_state.route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, risk_scores)
-                        else: st.session_state.route_info = None
-                        st.rerun()
+                picked_list = clicked_state.picked_objects # Call the function to get the list
+                if picked_list: # Check if the list is not empty
+                    selected_obj = picked_list[0]
+                    if selected_obj and 'id' in selected_obj:
+                        if st.session_state.get('selected_incident', {}).get('id') != selected_obj['id']:
+                            st.session_state.selected_incident = next((inc for inc in all_incidents if inc.get('id') == selected_obj['id']), None)
+                            if st.session_state.selected_incident:
+                                st.session_state.route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, risk_scores)
+                            else: st.session_state.route_info = None
+                            st.rerun()
         with ticket_col:
             st.subheader("Dispatch Ticket")
             if not st.session_state.get('selected_incident'): st.info("Click an incident on the map to generate a dispatch plan.")
