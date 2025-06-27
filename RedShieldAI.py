@@ -9,7 +9,7 @@ import geopandas as gpd
 from shapely.geometry import Point, Polygon, LineString
 import pydeck as pdk
 from sklearn.ensemble import RandomForestRegressor
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Any
 import yaml
 
@@ -197,14 +197,13 @@ def main():
         with map_col:
             zones_gdf, hospital_df, ambulance_df, incident_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, config.get('styling', {}))
             
-            # BUG FIX: Removed the failing on_select parameter and now check the return value correctly.
+            # BUG FIX: Replaced the failing `on_select` parameter and now check the return value correctly.
+            # The return value is a dictionary, not an object.
             clicked_state = st.pydeck_chart(create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, st.session_state.get('route_info'), config.get('styling', {})), key="deck_map")
             
             if clicked_state and clicked_state.get("picked_objects"):
-                # The picked object is a list, we take the first one.
                 selected_obj = clicked_state["picked_objects"][0]
                 if selected_obj and 'id' in selected_obj:
-                    # To prevent infinite reruns, only update state if the selection has changed
                     if st.session_state.get('selected_incident', {}).get('id') != selected_obj['id']:
                         st.session_state.selected_incident = next((inc for inc in all_incidents if inc.get('id') == selected_obj['id']), None)
                         st.session_state.route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, zones_gdf) if st.session_state.selected_incident else None
@@ -256,5 +255,7 @@ def main():
                 sim_risk_scores[zone] = sim_risk * (1 + len(l_data.get('active_incidents', [])))
             st.subheader("Simulated Zonal Risk"); st.bar_chart(pd.DataFrame.from_dict(sim_risk_scores, orient='index', columns=['Simulated Risk']).sort_values('Simulated Risk', ascending=False))
 
+if __name__ == "__main__":
+    main()
 if __name__ == "__main__":
     main()
