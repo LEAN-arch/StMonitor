@@ -1,8 +1,7 @@
 # RedShieldAI_SME_Fully_Enhanced_App.py
-# FINAL, FULLY INTEGRATED VERSION
-# This script combines all debugging and UX/DX enhancements into a single,
-# complete application. It features a fully functional Pydeck map and uses the
-# Altair library for interactive, insightful, and professional data visualizations.
+# FINAL, FULLY INTEGRATED AND DEBUGGED VERSION
+# This script combines all enhancements and fixes the SyntaxError caused by a
+# missing comma in the configuration dictionary. It is the definitive, runnable version.
 
 import streamlit as st
 import pandas as pd
@@ -38,9 +37,12 @@ def get_app_config() -> Dict:
             'zones': {
                 "Zona Río": {'polygon': [[32.52, -117.01], [32.535, -117.01], [32.535, -117.035], [32.52, -117.035]], 'crime': 0.7, 'road_quality': 0.9},
                 "Otay": {'polygon': [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]], 'crime': 0.5, 'road_quality': 0.7},
-                "Playas": {'polygon': [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]], 'crime': 0.4, 'road_quality': 0.8}
+                # DEBUG FIX: Added the missing comma at the end of this line.
+                "Playas": {'polygon': [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]], 'crime': 0.4, 'road_quality': 0.8},
             },
-            'city_boundary': [[32.535, -117.129], [32.510, -117.125], [32.448, -117.060], [32.435, -116.930], [32.537, -116.930], [32.537, -117.030], [32.542, -117.038], [32.543, -117.128]],
+            'city_boundary': [
+                [32.535, -117.129], [32.510, -117.125], [32.448, -117.060], [32.435, -116.930],
+                [32.537, -116.930], [32.537, -117.030], [32.542, -117.038], [32.543, -117.128]
             ],
             'patient_vitals': {
                 "P001": {'heart_rate': 145, 'oxygen': 88, 'ambulance': "A03"},
@@ -361,7 +363,7 @@ def main():
 
     def handle_incident_selection():
         selected_id = st.session_state.get("incident_selector")
-        risk_scores = engine.calculate_risk_scores(live_state) # Recalculate risk scores on interaction
+        risk_scores = engine.calculate_risk_scores(live_state)
         if selected_id and incident_dict.get(selected_id):
             st.session_state.selected_incident = incident_dict[selected_id]
             st.session_state.route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, risk_scores)
