@@ -1,7 +1,7 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL, GUARANTEED DEPLOYMENT VERSION: The configuration is now embedded
-# directly in this script with corrected YAML syntax, eliminating all external file
-# dependencies and guaranteeing that all assets are always loaded.
+# FINAL, GUARANTEED DEPLOYMENT VERSION: Fixes the infinite loop by separating
+# the UI (st.spinner) from the cached computation (@st.cache_resource), which
+# is the correct and robust Streamlit design pattern.
 
 import streamlit as st
 import pandas as pd
@@ -18,15 +18,8 @@ import os
 import json
 import time
 
-# --- L0: CONFIGURATION, PATHS, AND SELF-SETUP ---
-SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
-MODEL_FILE = os.path.join(SCRIPT_DIR, 'demand_model.json')
-FEATURES_FILE = os.path.join(SCRIPT_DIR, 'model_features.json')
-LOCK_FILE = os.path.join(SCRIPT_DIR, '.model_lock')
+# --- L0: CONFIGURATION AND CORE UTILITIES ---
 
-# ##################################################################
-# ###############      THE DEFINITIVE FIX        ###############
-# ##################################################################
 def get_app_config() -> Dict:
     """Returns the application configuration as a dictionary. The YAML is embedded to prevent file loading issues."""
     config_string = """
@@ -88,25 +81,12 @@ styling:
   icons: { hospital: "https://img.icons8.com/color/96/hospital-3.png", ambulance: "https://img.icons8.com/color/96/ambulance.png" }
 """
     return yaml.safe_load(config_string)
-# ##################################################################
-
-@st.cache_resource
-def get_engine():
-    """
-    This function is called only ONCE per application lifetime.
-    It creates the expensive, stateful objects (data fabric, AI model).
-    Streamlit's cache stores the returned 'engine' object in memory.
-    """
-    with st.spinner("Inicializando el motor de IA por primera vez..."):
-        app_config = get_app_config()
-        data_fabric = DataFusionFabric(app_config)
-        engine = CognitiveEngine(data_fabric, app_config)
-        return engine
 
 def _safe_division(n, d): return n / d if d else 0
 def find_nearest_node(graph: nx.Graph, point: Point):
     return min(graph.nodes, key=lambda node: point.distance(Point(graph.nodes[node]['pos'][1], graph.nodes[node]['pos'][0])))
 
+# --- L1: DATA & MODELING LAYER ---
 class DataFusionFabric:
     def __init__(self, config: Dict):
         self.config = config.get('data', {}); self.hospitals = {name: {'location': Point(data['location'][1], data['location'][0]), 'capacity': data['capacity'], 'load': data['load']} for name, data in self.config.get('hospitals', {}).items()}; self.ambulances = {name: {'location': Point(data['location'][1], data['location'][0]), 'status': data['status']} for name, data in self.config.get('ambulances', {}).items()}; self.zones = {name: {**data, 'polygon': Polygon([(p[1], p[0]) for p in data['polygon']])} for name, data in self.config.get('zones', {}).items()}; self.patient_vitals = self.config.get('patient_vitals', {}); self.road_graph = self._build_road_graph(self.config.get('road_network', {})); self.city_boundary = Polygon([(p[1], p[0]) for p in self.config.get('city_boundary', [])])
@@ -132,7 +112,6 @@ class CognitiveEngine:
     def __init__(self, data_fabric: DataFusionFabric, model_config: Dict):
         self.data_fabric = data_fabric
         self.demand_model, self.model_features = self._train_demand_model(model_config)
-
     def _train_demand_model(self, model_config: Dict):
         print("--- Entrenando modelo de demanda (ejecutado una sola vez gracias a @st.cache_resource) ---")
         model_params = model_config.get('data', {}).get('model_params', {})
@@ -142,7 +121,6 @@ class CognitiveEngine:
         model = xgb.XGBRegressor(objective='reg:squarederror', **model_params, random_state=42, n_jobs=-1)
         model.fit(X_train, y_train)
         return model, list(X_train.columns)
-
     def predict_citywide_demand(self, features: Dict) -> float:
         input_df = pd.DataFrame([features], columns=self.model_features); return max(0, self.demand_model.predict(input_df)[0])
     def calculate_risk_scores(self, live_state: Dict) -> Dict:
@@ -175,6 +153,7 @@ class CognitiveEngine:
         if not options: return {"error": "No se pudieron calcular rutas a hospitales."}
         best_option = min(options, key=lambda x: x.get('total_score', float('inf'))); path_coords = [[self.data_fabric.road_graph.nodes[node]['pos'][1], self.data_fabric.road_graph.nodes[node]['pos'][0]] for node in best_option['path_nodes']]; return {"ambulance_unit": ambulance_unit, "best_hospital": best_option.get('hospital'), "routing_analysis": pd.DataFrame(options).drop(columns=['path_nodes']).sort_values('total_score').reset_index(drop=True), "route_path_coords": path_coords}
 
+# --- L2: PRESENTATION LAYER (Unchanged) ---
 def kpi_card(icon: str, title: str, value: Any, color: str):
     st.markdown(f"""<div style="background-color: #262730; border: 1px solid #444; border-radius: 10px; padding: 20px; text-align: center; height: 100%;"><div style="font-size: 40px;">{icon}</div><div style="font-size: 16px; color: #bbb; margin-top: 10px; text-transform: uppercase; font-weight: 600;">{title}</div><div style="font-size: 28px; font-weight: bold; color: {color};">{value}</div></div>""", unsafe_allow_html=True)
 def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_config):
@@ -206,10 +185,32 @@ def display_ai_rationale(route_info: Dict):
         if not reasons: reasons.append("fue un cercano segundo lugar, pero menos óptimo en general")
         st.error(f"**Alternativa Rechazada:** `{rejected.get('hospital', 'N/A')}` debido a {', '.join(reasons)}.", icon="❌")
 
+# ##################################################################
+# ###############      THE ROBUST SOLUTION         ###############
+# ##################################################################
+@st.cache_resource
+def get_engine():
+    """
+    This function is a pure computation function, called only ONCE.
+    It creates the expensive, stateful objects (data fabric, AI model).
+    Streamlit's cache stores the returned 'engine' object in memory.
+    NO st. UI calls are allowed in here.
+    """
+    app_config = get_app_config()
+    data_fabric = DataFusionFabric(app_config)
+    engine = CognitiveEngine(data_fabric, app_config)
+    return engine
+# ##################################################################
+
 def main():
     st.set_page_config(page_title="RedShield AI: Comando Élite", layout="wide", initial_sidebar_state="expanded")
-    engine = get_engine()
+    
+    # Wrap the call to the cached function with the spinner.
+    with st.spinner("Inicializando el motor de IA por primera vez..."):
+        engine = get_engine()
+        
     data_fabric = engine.data_fabric
+    
     live_state = data_fabric.get_live_state(); risk_scores = engine.calculate_risk_scores(live_state); all_incidents = live_state.get("city_incidents", {}).get("active_incidents", [])
     incident_dict = {i['id']: i for i in all_incidents}
 
