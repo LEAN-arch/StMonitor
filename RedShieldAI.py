@@ -91,7 +91,6 @@ def get_app_config() -> Dict:
         }
     }
     return config_dict
-# ##################################################################
 
 def _safe_division(n, d): return n / d if d else 0
 def find_nearest_node(graph: nx.Graph, point: Point):
