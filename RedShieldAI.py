@@ -1,6 +1,8 @@
-# RedShieldAI_SME_Optimized_Command_Center.py
-# FINAL DEPLOYMENT-READY VERSION 3: Definitive fix for the TypeError by removing
-# the invalid 'key' argument from the st.pydeck_chart call.
+# RedShieldAI_SME_Self_Contained_App.py
+# FINAL DEPLOYMENT-READY VERSION for serverless environments.
+# This single file handles one-time model training on its first run and then
+# loads the pre-trained model for all subsequent runs. It is robust against
+# concurrent initial requests.
 
 import streamlit as st
 import pandas as pd
@@ -15,19 +17,82 @@ import yaml
 import networkx as nx
 import os
 import json
+import time
 
-# --- L0: CONFIGURATION, UTILITIES, AND CACHED LOADERS ---
+# --- L0: CONFIGURATION, PATHS, AND SELF-SETUP ---
+
+# --- SME FIX: Use absolute paths to work reliably in any environment ---
+# This is crucial for cloud deployments where the working directory is not guaranteed.
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+CONFIG_FILE = os.path.join(SCRIPT_DIR, 'config.yaml')
+MODEL_FILE = os.path.join(SCRIPT_DIR, 'demand_model.xgb')
+FEATURES_FILE = os.path.join(SCRIPT_DIR, 'model_features.json')
+LOCK_FILE = os.path.join(SCRIPT_DIR, '.model_lock')
+
+def _train_and_save_model():
+    """
+    Performs the one-time, expensive model training.
+    Creates a lock file to prevent race conditions in concurrent environments.
+    """
+    # Attempt to acquire a lock
+    try:
+        # 'x' mode creates a file, fails if it already exists (atomic operation)
+        with open(LOCK_FILE, 'x') as f:
+            f.write(str(os.getpid()))
+    except FileExistsError:
+        # Another process is already training, wait for it to finish
+        st.info("Another user is initializing the AI model. Please wait a moment...")
+        while os.path.exists(LOCK_FILE):
+            time.sleep(2)
+        # The model should exist now, so we can try to load it.
+        return
+
+    # If we got the lock, we are the one to do the training
+    try:
+        with st.spinner("First-time setup: Training demand forecast model... This may take a minute."):
+            print("--- Starting one-time RedShield AI Model Training ---")
+            with open(CONFIG_FILE, 'r') as f:
+                config = yaml.safe_load(f)
+            model_params = config.get('data', {}).get('model_params', {})
+            
+            # 1. Generate Training Data
+            hours = 24 * 365
+            timestamps = pd.to_datetime(pd.date_range(start='2023-01-01', periods=hours, freq='h'))
+            X_train = pd.DataFrame({'hour': timestamps.hour, 'day_of_week': timestamps.dayofweek, 'is_quincena': timestamps.day.isin([14,15,16,29,30,31,1]), 'temperature': np.random.normal(22, 5, hours), 'border_wait': np.random.randint(20, 120, hours)})
+            y_train = np.maximum(0, 5 + 3 * np.sin(X_train['hour'] * 2 * np.pi / 24) + X_train['is_quincena'] * 5 + X_train['border_wait']/20 + np.random.randn(hours)).astype(int)
+            
+            # 2. Train the XGBoost Model
+            model = xgb.XGBRegressor(objective='reg:squarederror', **model_params, random_state=42, n_jobs=-1)
+            model.fit(X_train, y_train)
+            
+            # 3. Save the Model and Feature List
+            model.save_model(MODEL_FILE)
+            features = list(X_train.columns)
+            with open(FEATURES_FILE, 'w') as f:
+                json.dump(features, f)
+            print("--- Model Training Successful ---")
+    finally:
+        # IMPORTANT: Release the lock whether training succeeded or failed
+        if os.path.exists(LOCK_FILE):
+            os.remove(LOCK_FILE)
+
 @st.cache_data
-def load_config(path='config.yaml'):
+def load_config(path):
     with open(path, 'r') as f: return yaml.safe_load(f)
 
 @st.cache_resource
 def load_demand_model() -> tuple:
-    MODEL_FILE = 'demand_model.xgb'
-    FEATURES_FILE = 'model_features.json'
-    if not os.path.exists(MODEL_FILE) or not os.path.exists(FEATURES_FILE):
-        st.error(f"Model artifacts not found! Please run `python train_model.py` first.")
-        st.stop()
+    """
+    Loads the pre-trained model. If it doesn't exist, triggers the one-time training process.
+    """
+    if not os.path.exists(MODEL_FILE):
+        _train_and_save_model()
+        # After training, we might need to rerun the script to clear the spinner and load properly.
+        if not os.path.exists(MODEL_FILE):
+             st.error("Model training failed. Please check the logs.")
+             st.stop()
+        st.rerun()
+
     model = xgb.XGBRegressor()
     model.load_model(MODEL_FILE)
     with open(FEATURES_FILE, 'r') as f:
@@ -40,6 +105,7 @@ def find_nearest_node(graph: nx.Graph, point: Point):
 
 # --- L1: DATA & MODELING LAYER ---
 class DataFusionFabric:
+    # (This class is unchanged)
     def __init__(self, config: Dict):
         self.config = config.get('data', {})
         self.hospitals = {name: {'location': Point(data['location'][1], data['location'][0]), 'capacity': data['capacity'], 'load': data['load']} for name, data in self.config.get('hospitals', {}).items()}
@@ -66,12 +132,12 @@ class DataFusionFabric:
         return state
 
 class CognitiveEngine:
+    # (This class is unchanged)
     def __init__(self, data_fabric: DataFusionFabric):
         self.data_fabric = data_fabric
         self.demand_model, self.model_features = load_demand_model()
     def predict_citywide_demand(self, features: Dict) -> float:
-        input_df = pd.DataFrame([features], columns=self.model_features)
-        return max(0, self.demand_model.predict(input_df)[0])
+        input_df = pd.DataFrame([features], columns=self.model_features); return max(0, self.demand_model.predict(input_df)[0])
     def calculate_risk_scores(self, live_state: Dict) -> Dict:
         risk_scores = {};
         for zone, s_data in self.data_fabric.zones.items():
@@ -102,6 +168,7 @@ class CognitiveEngine:
         best_option = min(options, key=lambda x: x.get('total_score', float('inf'))); path_coords = [[self.data_fabric.road_graph.nodes[node]['pos'][1], self.data_fabric.road_graph.nodes[node]['pos'][0]] for node in best_option['path_nodes']]; return {"ambulance_unit": ambulance_unit, "best_hospital": best_option.get('hospital'), "routing_analysis": pd.DataFrame(options).drop(columns=['path_nodes']).sort_values('total_score').reset_index(drop=True), "route_path_coords": path_coords}
 
 # --- L2: PRESENTATION LAYER ---
+# (This section is unchanged and correct)
 def kpi_card(icon: str, title: str, value: Any, color: str):
     st.markdown(f"""<div style="background-color: #262730; border: 1px solid #444; border-radius: 10px; padding: 20px; text-align: center; height: 100%;"><div style="font-size: 40px;">{icon}</div><div style="font-size: 16px; color: #bbb; margin-top: 10px; text-transform: uppercase; font-weight: 600;">{title}</div><div style="font-size: 28px; font-weight: bold; color: {color};">{value}</div></div>""", unsafe_allow_html=True)
 def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_config):
@@ -139,10 +206,16 @@ def display_ai_rationale(route_info: Dict):
 # --- L3: MAIN APPLICATION ---
 def main():
     st.set_page_config(page_title="RedShield AI: Elite Command", layout="wide", initial_sidebar_state="expanded")
-    config = load_config()
-    if 'data_fabric' not in st.session_state: st.session_state.data_fabric = DataFusionFabric(config)
-    if 'cognitive_engine' not in st.session_state: st.session_state.cognitive_engine = CognitiveEngine(st.session_state.data_fabric)
-    data_fabric, engine = st.session_state.data_fabric, st.session_state.cognitive_engine
+    config = load_config(CONFIG_FILE)
+    
+    # The session state initialization will now trigger the self-setup process if needed.
+    if 'cognitive_engine' not in st.session_state:
+        # This single call now handles everything: checking, training, and loading.
+        st.session_state.cognitive_engine = CognitiveEngine(DataFusionFabric(config))
+        
+    engine = st.session_state.cognitive_engine
+    data_fabric = engine.data_fabric # Get the fabric instance from the engine
+    
     live_state = data_fabric.get_live_state(); risk_scores = engine.calculate_risk_scores(live_state); all_incidents = [inc for zone_data in live_state.values() for inc in zone_data.get('active_incidents', [])]
     with st.sidebar:
         st.title("RedShield AI"); st.write("Tijuana Emergency Intelligence"); tab_choice = st.radio("Navigation", ["Live Operations", "System Analytics", "Strategic Simulation"], label_visibility="collapsed"); st.divider();
@@ -157,10 +230,7 @@ def main():
         with map_col:
             zones_gdf, hosp_df, amb_df, inc_df, heat_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, config.get('styling', {}))
             deck = create_deck_gl_map(zones_gdf, hosp_df, amb_df, inc_df, heat_df, st.session_state.get('route_info'), config.get('styling', {}))
-            
-            # --- FINAL FIX: The 'key' argument is removed from this call ---
             clicked_state = st.pydeck_chart(deck, use_container_width=True)
-            
             if clicked_state and clicked_state.picked_objects:
                 selected_obj = clicked_state.picked_objects[0]
                 if selected_obj and 'id' in selected_obj:
@@ -168,8 +238,7 @@ def main():
                         st.session_state.selected_incident = next((inc for inc in all_incidents if inc.get('id') == selected_obj['id']), None)
                         if st.session_state.selected_incident:
                             st.session_state.route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, risk_scores)
-                        else:
-                            st.session_state.route_info = None
+                        else: st.session_state.route_info = None
                         st.rerun()
         with ticket_col:
             st.subheader("Dispatch Ticket")
