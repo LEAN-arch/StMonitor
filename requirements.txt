@@ -1,12 +1,7 @@
-# Core Streamlit and data manipulation
 streamlit
 pandas
 numpy
-
-# Machine Learning
 scikit-learn
-
-# Geospatial libraries
 geopandas
 pydeck
 shapely
