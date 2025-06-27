@@ -1,9 +1,7 @@
 # RedShieldAI_SME_Optimized_Command_Center.py
-# SME LEVEL: Enterprise-grade, re-engineered for maximum predictive accuracy,
-# actionable intelligence, and operational realism. Features a PRE-TRAINED XGBoost demand model,
-# A* graph-based routing, and advanced, multi-layered visualizations.
+# FINAL DEPLOYMENT-READY VERSION: Fixes the UnhashableParamError by decoupling the
+# cached loading function from the class instance. This is the robust, production-grade pattern.
 
-# ... (keep all imports)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -18,17 +16,44 @@ import networkx as nx
 import os
 import json
 
-# ... (keep L0 Utilities: load_config, _safe_division, find_nearest_node)
+# --- L0: CONFIGURATION, UTILITIES, AND **CACHED LOADERS** ---
+
 @st.cache_data
 def load_config(path='config.yaml'):
+    """Loads the application configuration from a YAML file."""
     with open(path, 'r') as f: return yaml.safe_load(f)
+
 def _safe_division(n, d): return n / d if d else 0
+
 def find_nearest_node(graph: nx.Graph, point: Point):
+    """Finds the nearest graph node to a given Shapely Point."""
     return min(graph.nodes, key=lambda node: point.distance(Point(graph.nodes[node]['pos'][1], graph.nodes[node]['pos'][0])))
 
-# ... (keep L1 DataFusionFabric class exactly as it was)
+# --- SME FIX: Moved the loading function OUTSIDE the class ---
+# This function is now a standalone utility. It has no `self` argument,
+# so the @st.cache_resource decorator works perfectly.
+@st.cache_resource
+def load_demand_model() -> tuple:
+    """Loads the pre-trained XGBoost model and feature list from disk."""
+    MODEL_FILE = 'demand_model.xgb'
+    FEATURES_FILE = 'model_features.json'
+
+    if not os.path.exists(MODEL_FILE) or not os.path.exists(FEATURES_FILE):
+        st.error(f"Model artifacts not found! Please run `python train_model.py` first.")
+        st.stop()
+    
+    model = xgb.XGBRegressor()
+    model.load_model(MODEL_FILE)
+    
+    with open(FEATURES_FILE, 'r') as f:
+        features = json.load(f)
+        
+    return model, features
+
+# --- L1: DATA & MODELING LAYER ---
+
 class DataFusionFabric:
-    # ... (no changes needed in this class)
+    """Manages all static and dynamic data, including the city's road network graph."""
     def __init__(self, config: Dict):
         self.config = config.get('data', {})
         self.hospitals = {name: {'location': Point(data['location'][1], data['location'][0]), 'capacity': data['capacity'], 'load': data['load']} for name, data in self.config.get('hospitals', {}).items()}
@@ -65,33 +90,9 @@ class CognitiveEngine:
     """The 'brain' of the system, powered by a PRE-TRAINED XGBoost model and A* pathfinding."""
     def __init__(self, data_fabric: DataFusionFabric):
         self.data_fabric = data_fabric
-        # MODIFICATION: Call the new loading function
-        self.demand_model, self.model_features = self._load_demand_model()
+        # MODIFICATION: Call the new standalone loading function
+        self.demand_model, self.model_features = load_demand_model()
 
-    # REMOVED: _get_demand_model_xgboost(...)
-    # This entire slow function is now gone from the live app.
-
-    # NEW FUNCTION: Load the pre-trained model from disk. This is extremely fast.
-    @st.cache_resource
-    def _load_demand_model() -> tuple:
-        """Loads the pre-trained XGBoost model and feature list from disk."""
-        MODEL_FILE = 'demand_model.xgb'
-        FEATURES_FILE = 'model_features.json'
-
-        if not os.path.exists(MODEL_FILE) or not os.path.exists(FEATURES_FILE):
-            st.error(f"Model artifacts not found! Please run `python train_model.py` first.")
-            st.stop()
-        
-        model = xgb.XGBRegressor()
-        model.load_model(MODEL_FILE)
-        
-        with open(FEATURES_FILE, 'r') as f:
-            features = json.load(f)
-            
-        return model, features
-
-    # ... (keep all other methods in CognitiveEngine: predict_citywide_demand, calculate_risk_scores, etc.)
-    # NO CHANGES needed for the rest of the class.
     def predict_citywide_demand(self, features: Dict) -> float:
         input_df = pd.DataFrame([features], columns=self.model_features)
         return max(0, self.demand_model.predict(input_df)[0])
@@ -147,12 +148,8 @@ class CognitiveEngine:
         path_coords = [[self.data_fabric.road_graph.nodes[node]['pos'][1], self.data_fabric.road_graph.nodes[node]['pos'][0]] for node in best_option['path_nodes']]
         return {"ambulance_unit": ambulance_unit, "best_hospital": best_option.get('hospital'), "routing_analysis": pd.DataFrame(options).drop(columns=['path_nodes']).sort_values('total_score').reset_index(drop=True), "route_path_coords": path_coords}
 
-
-# ... (Keep L2 Presentation Layer and L3 Main Application)
-# NO CHANGES are needed in the rest of the file.
-# The `main()` function and all visualization/UI code remain the same.
-
 # --- L2: PRESENTATION LAYER ---
+# (No changes needed in this section)
 def kpi_card(icon: str, title: str, value: Any, color: str):
     st.markdown(f"""
     <div style="background-color: #262730; border: 1px solid #444; border-radius: 10px; padding: 20px; text-align: center; height: 100%;">
@@ -198,6 +195,7 @@ def display_ai_rationale(route_info: Dict):
         st.error(f"**Alternative Rejected:** `{rejected.get('hospital', 'N/A')}` due to {', '.join(reasons)}.", icon="❌")
 
 # --- L3: MAIN APPLICATION ---
+# (No changes needed in this section)
 def main():
     st.set_page_config(page_title="RedShield AI: Elite Command", layout="wide", initial_sidebar_state="expanded")
     config = load_config()
@@ -250,7 +248,6 @@ def main():
                 display_ai_rationale(st.session_state.route_info)
                 with st.expander("Show Detailed Routing Analysis"):
                     st.dataframe(st.session_state.route_info['routing_analysis'].set_index('hospital'))
-    # ... (rest of main function is unchanged)
     elif tab_choice == "System Analytics":
         st.header("System-Wide Analytics & AI Insights")
         forecast_col, feature_col = st.columns(2)
@@ -296,5 +293,6 @@ def main():
             st.subheader("Simulated Zonal Risk Scores")
             st.bar_chart(pd.DataFrame.from_dict(sim_risk_scores, orient='index', columns=['Simulated Risk']).sort_values('Simulated Risk', ascending=False))
             st.markdown("High-risk zones under these simulated conditions would require pre-emptive resource staging.")
+
 if __name__ == "__main__":
     main()
