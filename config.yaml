@@ -14,18 +14,19 @@ data:
 
 styling:
   colors:
-    available: [0, 179, 89, 255]      # Strong Green
-    on_mission: [150, 150, 150, 180]    # Grey
-    hospital_ok: [0, 179, 89]        # Green
-    hospital_warn: [255, 191, 0]     # Yellow
-    hospital_crit: [220, 53, 69]      # Red
-    incident_halo: [220, 53, 69]      # Red
-    route_path: [0, 123, 255]         # Blue
+    available: [0, 179, 89, 255]
+    on_mission: [150, 150, 150, 180]
+    hospital_ok: [0, 179, 89]
+    hospital_warn: [255, 191, 0]
+    hospital_crit: [220, 53, 69]
+    incident_halo: [220, 53, 69]
+    route_path: [0, 123, 255]
   sizes:
     ambulance_available: 4.5
     ambulance_mission: 2.5
     hospital: 4.0
     incident_base: 5.0
+  # BUG FIX: Added the missing 'icons' section
   icons:
     hospital: "https://img.icons8.com/color/96/hospital-3.png"
     ambulance: "https://img.icons8.com/color/96/ambulance.png"
