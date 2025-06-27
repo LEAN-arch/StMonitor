@@ -1,19 +1,28 @@
 # train_model.py
 # SME-Grade Offline Model Training Script
-# This script is run ONLY ONCE to generate the model artifacts.
-# It is NOT part of the live Streamlit application.
+# SME FIX: Uses absolute paths to guarantee files are saved in the correct location.
 
 import pandas as pd
 import numpy as np
 import xgboost as xgb
 import json
 import yaml
+import os
 
 print("--- Starting RedShield AI Model Training ---")
 
+# --- SME FIX: Use absolute paths to make script location-independent ---
+# Get the directory where this script is located
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+MODEL_FILE = os.path.join(SCRIPT_DIR, 'demand_model.xgb')
+FEATURES_FILE = os.path.join(SCRIPT_DIR, 'model_features.json')
+CONFIG_FILE = os.path.join(SCRIPT_DIR, 'config.yaml')
+
+print(f"Project directory detected: {SCRIPT_DIR}")
+
 # Load configuration to get model parameters
-print("Loading configuration from config.yaml...")
-with open('config.yaml', 'r') as f:
+print(f"Loading configuration from {CONFIG_FILE}...")
+with open(CONFIG_FILE, 'r') as f:
     config = yaml.safe_load(f)
 model_params = config.get('data', {}).get('model_params', {})
 print(f"Using XGBoost parameters: {model_params}")
@@ -29,7 +38,6 @@ X_train = pd.DataFrame({
     'temperature': np.random.normal(22, 5, hours),
     'border_wait': np.random.randint(20, 120, hours)
 })
-# Realistic target variable
 y_train = np.maximum(0, 5 + 3 * np.sin(X_train['hour'] * 2 * np.pi / 24) + X_train['is_quincena'] * 5 + X_train['border_wait']/20 + np.random.randn(hours)).astype(int)
 print("Data generation complete.")
 
@@ -40,9 +48,6 @@ model.fit(X_train, y_train)
 print("Model training complete.")
 
 # 3. Save the Model and Feature List to Disk
-MODEL_FILE = 'demand_model.xgb'
-FEATURES_FILE = 'model_features.json'
-
 print(f"Saving model to '{MODEL_FILE}'...")
 model.save_model(MODEL_FILE)
 
