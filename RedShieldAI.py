@@ -198,15 +198,16 @@ def main():
         with map_col:
             zones_gdf, hospital_df, ambulance_df, incident_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, config.get('styling', {}))
             
-            # BUG FIX: The 'on_select' parameter is removed. The return value is checked robustly.
-            # The key 'deck_map' is also essential for Streamlit to track the component's state.
-            clicked_state = st.pydeck_chart(create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, st.session_state.get('route_info'), config.get('styling', {})), key="deck_map")
+            # BUG FIX: The `on_select` parameter is removed. The return value is now checked robustly.
+            # The return value from st.pydeck_chart is a dictionary, not an object.
+            clicked_state = st.pydeck_chart(
+                create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, st.session_state.get('route_info'), config.get('styling', {})), 
+                key="deck_map"
+            )
             
-            # This is the correct, robust way to handle the returned state from PyDeck.
             if clicked_state and clicked_state.get("picked_objects"):
                 selected_obj = clicked_state["picked_objects"][0]
                 if selected_obj and 'id' in selected_obj:
-                    # To prevent infinite reruns, only update state if the selection has changed
                     if st.session_state.get('selected_incident', {}).get('id') != selected_obj['id']:
                         st.session_state.selected_incident = next((inc for inc in all_incidents if inc.get('id') == selected_obj['id']), None)
                         st.session_state.route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, zones_gdf) if st.session_state.selected_incident else None
