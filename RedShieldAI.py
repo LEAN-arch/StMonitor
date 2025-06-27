@@ -1,7 +1,7 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL, GUARANTEED DEPLOYMENT VERSION: Fixes the infinite loop by drastically
-# reducing the initial training time to prevent cloud platform timeouts. The core
-# caching architecture is now able to complete successfully.
+# FINAL, GUARANTEED DEPLOYMENT VERSION: Fixes the TypeError by replacing the
+# incorrect use of st.info() with a custom-styled st.markdown() component,
+# which is the correct way to render formatted HTML in a box.
 
 import streamlit as st
 import pandas as pd
@@ -44,25 +44,43 @@ data:
     "Otay": { polygon: [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]], crime: 0.5, road_quality: 0.7 }
     "Playas": { polygon: [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]], crime: 0.4, road_quality: 0.8 }
   city_boundary:
-    - [32.545, -117.14]; - [32.555, -116.93]; - [32.44, -116.93]; - [32.45, -117.14]
+    - [32.545, -117.14]
+    - [32.555, -116.93]
+    - [32.44, -116.93]
+    - [32.45, -117.14]
   patient_vitals:
     "P001": { heart_rate: 145, oxygen: 88, ambulance: "A03" }
     "P002": { heart_rate: 90, oxygen: 97, ambulance: "A01" }
     "P003": { heart_rate: 150, oxygen: 99, ambulance: "A02" }
   road_network:
     nodes:
-      "N_ZR1": { pos: [32.525, -117.02] }; "N_ZR2": { pos: [32.528, -117.01] }; "N_OT1": { pos: [32.535, -116.965] }; "N_PL1": { pos: [32.52, -117.12] }; "N_H_Gen": { pos: [32.5295, -117.0182] }; "N_H_IMSS": { pos: [32.5121, -117.0145] }; "N_H_Ang": { pos: [32.5300, -117.0200] }; "N_H_CruzR": { pos: [32.5283, -117.0255] }; "N_Amb_A01": { pos: [32.515, -117.04] }
+      "N_ZR1": { pos: [32.525, -117.02] }
+      "N_ZR2": { pos: [32.528, -117.01] }
+      "N_OT1": { pos: [32.535, -116.965] }
+      "N_PL1": { pos: [32.52, -117.12] }
+      "N_H_Gen": { pos: [32.5295, -117.0182] }
+      "N_H_IMSS": { pos: [32.5121, -117.0145] }
+      "N_H_Ang": { pos: [32.5300, -117.0200] }
+      "N_H_CruzR": { pos: [32.5283, -117.0255] }
+      "N_Amb_A01": { pos: [32.515, -117.04] }
     edges:
-      - ["N_ZR1", "N_ZR2", 2.5]; - ["N_ZR1", "N_H_Ang", 0.5]; - ["N_ZR1", "N_H_CruzR", 0.7]; - ["N_ZR2", "N_H_Gen", 0.8]; - ["N_ZR2", "N_H_IMSS", 3.0]; - ["N_ZR1", "N_Amb_A01", 4.0]; - ["N_ZR1", "N_PL1", 8.0]; - ["N_ZR2", "N_OT1", 9.0]; - ["N_PL1", "N_Amb_A01", 5.0]; - ["N_OT1", "N_H_IMSS", 6.0]
+      - ["N_ZR1", "N_ZR2", 2.5]
+      - ["N_ZR1", "N_H_Ang", 0.5]
+      - ["N_ZR1", "N_H_CruzR", 0.7]
+      - ["N_ZR2", "N_H_Gen", 0.8]
+      - ["N_ZR2", "N_H_IMSS", 3.0]
+      - ["N_ZR1", "N_Amb_A01", 4.0]
+      - ["N_ZR1", "N_PL1", 8.0]
+      - ["N_ZR2", "N_OT1", 9.0]
+      - ["N_PL1", "N_Amb_A01", 5.0]
+      - ["N_OT1", "N_H_IMSS", 6.0]
   model_params: { n_estimators: 250, max_depth: 5, learning_rate: 0.05, subsample: 0.8, colsample_bytree: 0.8 }
 styling:
   colors: { available: [0, 179, 89, 255], on_mission: [150, 150, 150, 180], hospital_ok: [0, 179, 89], hospital_warn: [255, 191, 0], hospital_crit: [220, 53, 69], incident_halo: [220, 53, 69], route_path: [0, 123, 255] }
   sizes: { ambulance_available: 4.5, ambulance_mission: 2.5, hospital: 4.0, incident_base: 5.0 }
   icons: { hospital: "https://img.icons8.com/color/96/hospital-3.png", ambulance: "https://img.icons8.com/color/96/ambulance.png" }
 """
-    # Quick fix for potential YAML syntax errors in single-line lists
-    clean_config = config_string.replace('; -', '\n    -')
-    return yaml.safe_load(clean_config)
+    return yaml.safe_load(config_string)
 
 def _safe_division(n, d): return n / d if d else 0
 def find_nearest_node(graph: nx.Graph, point: Point):
@@ -98,14 +116,7 @@ class CognitiveEngine:
     def _train_demand_model(self, model_config: Dict):
         print("--- Entrenando modelo de demanda (ejecutado una sola vez gracias a @st.cache_resource) ---")
         model_params = model_config.get('data', {}).get('model_params', {})
-        
-        # ##################################################################
-        # ###############      THE DEFINITIVE FIX        ###############
-        # ##################################################################
-        # Drastically reduce training data to ensure initial startup is fast and avoids cloud timeouts.
-        hours = 24 * 30  # From 365 days to 30 days
-        # ##################################################################
-        
+        hours = 24 * 30 
         timestamps = pd.to_datetime(pd.date_range(start='2023-01-01', periods=hours, freq='h'))
         X_train = pd.DataFrame({'hour': timestamps.hour, 'day_of_week': timestamps.dayofweek, 'is_quincena': timestamps.day.isin([14,15,16,29,30,31,1]), 'temperature': np.random.normal(22, 5, hours), 'border_wait': np.random.randint(20, 120, hours)})
         y_train = np.maximum(0, 5 + 3 * np.sin(X_train['hour'] * 2 * np.pi / 24) + X_train['is_quincena'] * 5 + X_train['border_wait']/20 + np.random.randn(hours)).astype(int)
@@ -145,9 +156,21 @@ class CognitiveEngine:
         if not options: return {"error": "No se pudieron calcular rutas a hospitales."}
         best_option = min(options, key=lambda x: x.get('total_score', float('inf'))); path_coords = [[self.data_fabric.road_graph.nodes[node]['pos'][1], self.data_fabric.road_graph.nodes[node]['pos'][0]] for node in best_option['path_nodes']]; return {"ambulance_unit": ambulance_unit, "best_hospital": best_option.get('hospital'), "routing_analysis": pd.DataFrame(options).drop(columns=['path_nodes']).sort_values('total_score').reset_index(drop=True), "route_path_coords": path_coords}
 
-# --- L2: PRESENTATION LAYER (Unchanged) ---
+# --- L2: PRESENTATION LAYER ---
 def kpi_card(icon: str, title: str, value: Any, color: str):
     st.markdown(f"""<div style="background-color: #262730; border: 1px solid #444; border-radius: 10px; padding: 20px; text-align: center; height: 100%;"><div style="font-size: 40px;">{icon}</div><div style="font-size: 16px; color: #bbb; margin-top: 10px; text-transform: uppercase; font-weight: 600;">{title}</div><div style="font-size: 28px; font-weight: bold; color: {color};">{value}</div></div>""", unsafe_allow_html=True)
+# ##################################################################
+# ###############      THE DEFINITIVE FIX        ###############
+# ##################################################################
+def info_box(message):
+    """Displays a formatted info box using st.markdown."""
+    st.markdown(
+        f'<div style="background-color: #e6f3ff; border-left: 5px solid #007bff; padding: 15px; border-radius: 5px; margin-bottom: 1em; color: #004085;">'
+        f'{message}'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+# ##################################################################
 def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_config):
     def get_hospital_color(load, capacity):
         load_pct = _safe_division(load, capacity);
@@ -179,12 +202,6 @@ def display_ai_rationale(route_info: Dict):
 
 @st.cache_resource
 def get_engine():
-    """
-    This function is a pure computation function, called only ONCE.
-    It creates the expensive, stateful objects (data fabric, AI model).
-    Streamlit's cache stores the returned 'engine' object in memory.
-    NO st. UI calls are allowed in here.
-    """
     app_config = get_app_config()
     data_fabric = DataFusionFabric(app_config)
     engine = CognitiveEngine(data_fabric, app_config)
@@ -192,12 +209,9 @@ def get_engine():
 
 def main():
     st.set_page_config(page_title="RedShield AI: Comando Élite", layout="wide", initial_sidebar_state="expanded")
-    
     with st.spinner("Inicializando el motor de IA por primera vez... (esto es rápido después del primer arranque)"):
         engine = get_engine()
-        
     data_fabric = engine.data_fabric
-    
     live_state = data_fabric.get_live_state(); risk_scores = engine.calculate_risk_scores(live_state); all_incidents = live_state.get("city_incidents", {}).get("active_incidents", [])
     incident_dict = {i['id']: i for i in all_incidents}
 
@@ -257,7 +271,7 @@ def main():
         forecast_col, feature_col = st.columns(2)
         with forecast_col:
             st.subheader("Pronóstico Probabilístico de Demanda (24h)")
-            st.info("""**Qué muestra:** La predicción de la IA para el número total de llamadas de emergencia en toda la ciudad para las próximas 24 horas.<br>- La **línea sólida** es el número más probable de llamadas.<br>- El **área sombreada** representa el intervalo de confianza del 95%, el rango probable de llamadas.<br><br>**Cómo usarlo:** Una alta demanda predicha puede justificar la asignación de personal adicional o el pre-posicionamiento de unidades en puntos calientes esperados.""", unsafe_allow_html=True)
+            info_box("""**Qué muestra:** La predicción de la IA para el número total de llamadas de emergencia en toda la ciudad para las próximas 24 horas.<br>- La **línea sólida** es el número más probable de llamadas.<br>- El **área sombreada** representa el intervalo de confianza del 95%.<br><br>**Cómo usarlo:** Una alta demanda predicha puede justificar la asignación de personal adicional o el pre-posicionamiento de unidades.""")
             with st.spinner("Calculando pronóstico de 24 horas..."):
                 future_hours = pd.date_range(start=datetime.now(), periods=24, freq='h'); forecast_data = []
                 for ts in future_hours:
@@ -265,7 +279,7 @@ def main():
                 st.area_chart(pd.DataFrame(forecast_data).set_index('time'))
         with feature_col:
             st.subheader("Importancia de Factores del Modelo (XAI)")
-            st.info("""**Qué muestra:** Los factores que tienen el mayor impacto en nuestro pronóstico de demanda de llamadas *en este momento*. Una barra más alta significa que ese factor tiene un mayor impacto.<br><br>**Cómo usarlo:** Esto explica el 'porqué' detrás de la predicción de la IA. Si `border_wait` (espera en la frontera) es alto en el gráfico, le dice que el tráfico fronterizo es un impulsor principal del volumen de llamadas hoy, lo que puede informar decisiones estratégicas.""", unsafe_allow_html=True)
+            info_box("""**Qué muestra:** Los factores que tienen el mayor impacto en nuestro pronóstico de demanda de llamadas *en este momento*. Una barra más alta significa que ese factor tiene un mayor impacto.<br><br>**Cómo usarlo:** Esto explica el 'porqué' detrás de la predicción de la IA. Si `border_wait` (espera en la frontera) es alto, le dice que el tráfico fronterizo es un impulsor principal del volumen de llamadas hoy.""")
             feature_importance = pd.DataFrame({'feature': engine.model_features, 'importance': engine.demand_model.feature_importances_}).sort_values('importance', ascending=True); st.bar_chart(feature_importance.set_index('feature'))
         st.divider(); col1, col2 = st.columns(2)
         with col1:
