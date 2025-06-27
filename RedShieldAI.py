@@ -1,7 +1,7 @@
 # RedShieldAI_SME_Self_Contained_App.py
 # FINAL, GUARANTEED DEPLOYMENT VERSION: The configuration is now embedded
-# directly in this script, eliminating all external file dependencies and
-# guaranteeing that all assets (9 ambulances, 4 hospitals) are always loaded.
+# directly in this script with corrected YAML syntax, eliminating all external file
+# dependencies and guaranteeing that all assets are always loaded.
 
 import streamlit as st
 import pandas as pd
@@ -12,7 +12,7 @@ import pydeck as pdk
 import xgboost as xgb
 from datetime import datetime
 from typing import Dict, List, Any
-import yaml # Still used for parsing the string, but not for file reading
+import yaml
 import networkx as nx
 import os
 import json
@@ -27,9 +27,8 @@ LOCK_FILE = os.path.join(SCRIPT_DIR, '.model_lock')
 # ##################################################################
 # ###############      THE DEFINITIVE FIX        ###############
 # ##################################################################
-# The configuration is now embedded in the script to guarantee it's always used.
 def get_app_config() -> Dict:
-    """Returns the application configuration as a dictionary."""
+    """Returns the application configuration as a dictionary. The YAML is embedded to prevent file loading issues."""
     config_string = """
 data:
   hospitals:
@@ -62,9 +61,26 @@ data:
     "P003": { heart_rate: 150, oxygen: 99, ambulance: "A02" }
   road_network:
     nodes:
-      "N_ZR1": { pos: [32.525, -117.02] }; "N_ZR2": { pos: [32.528, -117.01] }; "N_OT1": { pos: [32.535, -116.965] }; "N_PL1": { pos: [32.52, -117.12] }; "N_H_Gen": { pos: [32.5295, -117.0182] }; "N_H_IMSS": { pos: [32.5121, -117.0145] }; "N_H_Ang": { pos: [32.5300, -117.0200] }; "N_H_CruzR": { pos: [32.5283, -117.0255] }; "N_Amb_A01": { pos: [32.515, -117.04] }
+      "N_ZR1": { pos: [32.525, -117.02] }
+      "N_ZR2": { pos: [32.528, -117.01] }
+      "N_OT1": { pos: [32.535, -116.965] }
+      "N_PL1": { pos: [32.52, -117.12] }
+      "N_H_Gen": { pos: [32.5295, -117.0182] }
+      "N_H_IMSS": { pos: [32.5121, -117.0145] }
+      "N_H_Ang": { pos: [32.5300, -117.0200] }
+      "N_H_CruzR": { pos: [32.5283, -117.0255] }
+      "N_Amb_A01": { pos: [32.515, -117.04] }
     edges:
-      - ["N_ZR1", "N_ZR2", 2.5]; - ["N_ZR1", "N_H_Ang", 0.5]; - ["N_ZR1", "N_H_CruzR", 0.7]; - ["N_ZR2", "N_H_Gen", 0.8]; - ["N_ZR2", "N_H_IMSS", 3.0]; - ["N_ZR1", "N_Amb_A01", 4.0]; - ["N_ZR1", "N_PL1", 8.0]; - ["N_ZR2", "N_OT1", 9.0]; - ["N_PL1", "N_Amb_A01", 5.0]; - ["N_OT1", "N_H_IMSS", 6.0]
+      - ["N_ZR1", "N_ZR2", 2.5]
+      - ["N_ZR1", "N_H_Ang", 0.5]
+      - ["N_ZR1", "N_H_CruzR", 0.7]
+      - ["N_ZR2", "N_H_Gen", 0.8]
+      - ["N_ZR2", "N_H_IMSS", 3.0]
+      - ["N_ZR1", "N_Amb_A01", 4.0]
+      - ["N_ZR1", "N_PL1", 8.0]
+      - ["N_ZR2", "N_OT1", 9.0]
+      - ["N_PL1", "N_Amb_A01", 5.0]
+      - ["N_OT1", "N_H_IMSS", 6.0]
   model_params: { n_estimators: 250, max_depth: 5, learning_rate: 0.05, subsample: 0.8, colsample_bytree: 0.8 }
 styling:
   colors: { available: [0, 179, 89, 255], on_mission: [150, 150, 150, 180], hospital_ok: [0, 179, 89], hospital_warn: [255, 191, 0], hospital_crit: [220, 53, 69], incident_halo: [220, 53, 69], route_path: [0, 123, 255] }
