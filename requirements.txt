@@ -1,14 +1,9 @@
-# Production-ready dependencies with pinned versions for stability.
-streamlit
-pandas
-numpy
-scikit-learn
-geopandas
-pydeck
-shapely
-PyYAML
-# --- High-Performance Additions ---
-xgboost
-networkx
-# --- Visualization Additions ---
-altair
+streamlit==1.33.0
+pandas==2.2.1
+numpy==1.26.4
+geopandas==0.14.3
+pydeck==0.9.0
+xgboost==2.0.3
+networkx==3.2.1
+seaborn==0.13.2
+matplotlib==3.8.3
