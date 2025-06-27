@@ -27,6 +27,7 @@ class DataFusionFabric:
 
     @st.cache_data(ttl=60)
     def get_live_state(_self) -> Dict:
+        """Simulates fetching real-time data with guaranteed structure."""
         state = {}
         for zone, data in _self.static_zonal_data.items():
             incidents = []
@@ -91,12 +92,12 @@ class CognitiveEngine:
 def _safe_division(n, d): return n / d if d else 0
 
 def create_gauge(value: float, label: str, max_val: int = 100) -> str:
-    percent = _safe_division(value, max_val); angle = percent * 180
-    x_outer = 80 - 70 * np.cos(np.deg2rad(angle)); y_outer = 75 - 70 * np.sin(np.deg2rad(angle))
-    large_arc_flag = 1 if angle > 180 else 0
+    percent = min(1.0, _safe_division(value, max_val)); angle = percent * 180
+    x_outer = 80 - 70 * np.cos(np.deg2rad(angle-90)); y_outer = 75 - 70 * np.sin(np.deg2rad(angle-90))
+    large_arc_flag = 1 if angle > 180 else 0 # This flag is technically not needed for a 180-degree arc but is good practice.
     return f"""<div style="text-align: center;">
         <svg height="95" width="160">
-            <defs><linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#1f77b4" /><stop offset="70%" stop-color="#ff7f0e" /><stop offset="90%" stop-color="#d62728" /></linearGradient>
+            <defs><linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#28a745" /><stop offset="70%" stop-color="#ffc107" /><stop offset="90%" stop-color="#dc3545" /></linearGradient>
             <filter id="text-shadow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="1 1" result="shadow"/><feOffset dx="0" dy="0" /></filter></defs>
             <path d="M 10 75 A 65 65 0 0 1 150 75" stroke="#333" stroke-width="20" fill="none" />
             <path d="M 10 75 A 65 65 0 {large_arc_flag} 1 {x_outer} {y_outer}" stroke="url(#grad1)" stroke-width="20" fill="none" />
@@ -107,13 +108,20 @@ def create_gauge(value: float, label: str, max_val: int = 100) -> str:
 
 def create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, route_info=None):
     CARTO_DARK_MATTER_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+    
     zone_layer = pdk.Layer("PolygonLayer", data=zones_gdf, get_polygon="geometry", filled=True, stroked=False, extruded=True, get_elevation="risk * 2000", get_fill_color="fill_color", opacity=0.15, pickable=True)
-    layers = [zone_layer,
-              pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_url", get_position='[lon, lat]', get_size=4, get_color='color', size_scale=15, pickable=True),
-              pdk.Layer("IconLayer", data=ambulance_df, get_icon="icon_url", get_position='[lon, lat]', get_size='size', get_color='color', size_scale=15, pickable=True),
-              pdk.Layer("ScatterplotLayer", data=incident_df, get_position='[lon, lat]', get_radius='size*20', get_fill_color=[255, 80, 80, 255], pickable=True, radius_min_pixels=5)]
+    
+    hospital_layer = pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=4, get_color='color', size_scale=15, pickable=True)
+    ambulance_layer = pdk.Layer("IconLayer", data=ambulance_df, get_icon="icon_data", get_position='[lon, lat]', get_size='size', get_color='color', size_scale=15, pickable=True)
+    incident_layer = pdk.Layer("ScatterplotLayer", data=incident_df, get_position='[lon, lat]', get_radius='size*20', get_fill_color=[255, 80, 80, 255], pickable=True, radius_min_pixels=5, stroked=True, get_line_width=100, get_line_color=[255, 80, 80, 100])
+    
+    layers = [zone_layer, hospital_layer, ambulance_layer, incident_layer]
+    
     if route_info and "error" not in route_info:
-        layers.append(pdk.Layer('PathLayer', data=pd.DataFrame([{'path': [list(p) for p in LineString([route_info['ambulance_location'], route_info['hospital_location']]).coords]}]), get_path='path', get_width=5, get_color=[251, 192, 45], width_scale=1, width_min_pixels=5))
+        route_path = LineString([route_info['ambulance_location'], route_info['hospital_location']])
+        route_df = pd.DataFrame([{'path': [list(p) for p in route_path.coords]}])
+        layers.append(pdk.Layer('PathLayer', data=route_df, get_path='path', get_width=5, get_color=[251, 192, 45], width_scale=1, width_min_pixels=5))
+        
     view_state = pdk.ViewState(latitude=32.525, longitude=-117.02, zoom=11.5, bearing=0, pitch=50)
     tooltip = {"html": "<b>{name}</b><br/>{tooltip_text}", "style": {"backgroundColor": "#333", "color": "white", "border-radius": "5px", "padding": "5px"}}
     return pdk.Deck(layers=layers, initial_view_state=view_state, map_style=CARTO_DARK_MATTER_STYLE, tooltip=tooltip)
@@ -130,6 +138,7 @@ def display_ai_rationale(route_info: Dict):
         if not reasons: reasons.append("it was a close second but less optimal overall.")
         st.markdown(f"Rejected primarily due to {', '.join(reasons)}.")
 
+# --- MAIN APPLICATION ---
 def main():
     st.set_page_config(page_title="RedShield AI: Elite Command", layout="wide", initial_sidebar_state="expanded")
     st.markdown("""<style> .block-container { padding-top: 1rem; } </style>""", unsafe_allow_html=True)
@@ -153,9 +162,10 @@ def main():
 
     col1, col2 = st.columns((2.5, 1.5))
     with col1:
+        # --- Defensive Data Preparation for Visualization ---
         def get_hospital_color(load, capacity): load_pct = _safe_division(load, capacity); return [0, 255, 0, 255] if load_pct < 0.7 else ([255, 191, 0, 255] if load_pct < 0.9 else [255, 0, 0, 255])
-        hospital_df = pd.DataFrame([{"name": f"Hospital: {n}", "tooltip_text": f"Load: {d.get('load',0)}/{d.get('capacity',1)} ({_safe_division(d.get('load',0), d.get('capacity',1)):.0%})", "lon": d.get('location', Point(0,0)).x, "lat": d.get('location', Point(0,0)).y, "icon_url": "https://img.icons8.com/plasticine/100/hospital-3.png", "color": get_hospital_color(d.get('load',0), d.get('capacity',1))} for n, d in data_fabric.hospitals.items()])
-        ambulance_df = pd.DataFrame([{"name": f"Unit: {n}", "tooltip_text": f"Status: {d.get('status', 'Unknown')}", "lon": d.get('location', Point(0,0)).x, "lat": d.get('location', Point(0,0)).y, "icon_url": "https://img.icons8.com/plasticine/100/ambulance.png", "size": 4 if d.get('status') == 'Available' else 2.5, "color": [0, 255, 0, 255] if d.get('status') == 'Available' else [128, 128, 128, 180]} for n, d in data_fabric.ambulances.items()])
+        hospital_df = pd.DataFrame([{"name": f"Hospital: {n}", "tooltip_text": f"Load: {d.get('load',0)}/{d.get('capacity',1)} ({_safe_division(d.get('load',0), d.get('capacity',1)):.0%})", "lon": d.get('location', Point(0,0)).x, "lat": d.get('location', Point(0,0)).y, "icon_data": {"url": "https://img.icons8.com/plasticine/100/hospital-3.png", "width": 128, "height": 128, "anchorY": 128}, "color": get_hospital_color(d.get('load',0), d.get('capacity',1))} for n, d in data_fabric.hospitals.items()])
+        ambulance_df = pd.DataFrame([{"name": f"Unit: {n}", "tooltip_text": f"Status: {d.get('status', 'Unknown')}", "lon": d.get('location', Point(0,0)).x, "lat": d.get('location', Point(0,0)).y, "icon_data": {"url": "https://img.icons8.com/plasticine/100/ambulance.png", "width": 128, "height": 128, "anchorY": 128}, "size": 4 if d.get('status') == 'Available' else 2.5, "color": [0, 255, 0, 255] if d.get('status') == 'Available' else [128, 128, 128, 180]} for n, d in data_fabric.ambulances.items()])
         incident_df = pd.DataFrame([{"name": f"Incident: {i.get('id', 'N/A')}", "tooltip_text": f"Priority: {i.get('priority', 1)}", "lon": i.get('location', Point(0,0)).x, "lat": i.get('location', Point(0,0)).y, "size": 5 + i.get('priority', 1)**2} for i in all_incidents])
         zones_gdf = gpd.GeoDataFrame.from_dict(data_fabric.static_zonal_data, orient='index').set_geometry('polygon'); zones_gdf['name'] = zones_gdf.index; zones_gdf['risk'] = zones_gdf.index.map(risk_scores).fillna(0); zones_gdf['tooltip_text'] = ""
         max_risk = max(1, zones_gdf['risk'].max()); zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [255, int(255*(1-_safe_division(r,max_risk))), 0, 140]).tolist()
