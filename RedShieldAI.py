@@ -57,9 +57,9 @@ class CognitiveEngine:
 # --- L2: PRESENTATION LAYER ---
 def kpi_card(icon: str, title: str, value: Any, color: str):
     st.markdown(f"""
-    <div style="background-color: #F0F2F6; border: 1px solid #E0E0E0; border-radius: 10px; padding: 20px; text-align: center;">
+    <div style="background-color: #F8F9FA; border: 1px solid #E0E0E0; border-radius: 10px; padding: 20px; text-align: center; height: 100%;">
         <div style="font-size: 40px;">{icon}</div>
-        <div style="font-size: 16px; color: #555; margin-top: 10px;">{title}</div>
+        <div style="font-size: 16px; color: #555; margin-top: 10px; text-transform: uppercase; font-weight: 600;">{title}</div>
         <div style="font-size: 28px; font-weight: bold; color: {color};">{value}</div>
     </div>""", unsafe_allow_html=True)
 
