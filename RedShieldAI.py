@@ -51,7 +51,6 @@ class CognitiveEngine:
     def _get_demand_model(_self) -> tuple:
         """Trains and caches a sophisticated city-wide demand forecasting model."""
         hours = 24 * 90
-        # BUG FIX: Changed deprecated 'H' to 'h' for hourly frequency.
         timestamps = pd.to_datetime(pd.date_range(start='2024-01-01', periods=hours, freq='h'))
         X_train = pd.DataFrame({'hour': timestamps.hour, 'day_of_week': timestamps.dayofweek, 'is_quincena': timestamps.day.isin([14,15,16,29,30,31,1]), 'temperature': np.random.normal(22, 5, hours), 'border_wait': np.random.randint(20, 120, hours)})
         y_train = np.maximum(0, 5 + 3 * np.sin(X_train['hour'] * 2 * np.pi / 24) + X_train['is_quincena'] * 5 + X_train['border_wait']/20 + np.random.randn(hours)).astype(int)
@@ -199,13 +198,15 @@ def main():
         with map_col:
             zones_gdf, hospital_df, ambulance_df, incident_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, config.get('styling', {}))
             
-            # BUG FIX: The `on_select` parameter is removed. The return value is checked robustly.
+            # BUG FIX: The 'on_select' parameter is removed. The return value is checked robustly.
+            # The key 'deck_map' is also essential for Streamlit to track the component's state.
             clicked_state = st.pydeck_chart(create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, st.session_state.get('route_info'), config.get('styling', {})), key="deck_map")
             
-            # BUG FIX: This is the correct, robust way to handle the returned state from PyDeck.
-            if clicked_state and clicked_state["picked_objects"]:
+            # This is the correct, robust way to handle the returned state from PyDeck.
+            if clicked_state and clicked_state.get("picked_objects"):
                 selected_obj = clicked_state["picked_objects"][0]
                 if selected_obj and 'id' in selected_obj:
+                    # To prevent infinite reruns, only update state if the selection has changed
                     if st.session_state.get('selected_incident', {}).get('id') != selected_obj['id']:
                         st.session_state.selected_incident = next((inc for inc in all_incidents if inc.get('id') == selected_obj['id']), None)
                         st.session_state.route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, zones_gdf) if st.session_state.selected_incident else None
