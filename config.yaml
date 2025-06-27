@@ -6,17 +6,17 @@ data:
     "Hospital General": { location: [32.5295, -117.0182], capacity: 100, load: 85 }
     "IMSS Clínica 1": { location: [32.5121, -117.0145], capacity: 120, load: 70 }
     "Angeles": { location: [32.5300, -117.0200], capacity: 100, load: 95 }
-    "Cruz Roja Tijuana": { location: [32.528, -117.025], capacity: 80, load: 55 } # NEW
+    "Cruz Roja Tijuana": { location: [32.5283, -117.0255], capacity: 60, load: 60 } # NEW - Geocoded
   ambulances:
     "A01": { location: [32.515, -117.04], status: "Available" }
     "A02": { location: [32.535, -116.96], status: "Available" }
     "A03": { location: [32.52, -117.12], status: "On Mission" }
-    "A04": { location: [32.525, -117.02], status: "Available" }  # NEW - Zona Rio Center
-    "A05": { location: [32.515, -117.115], status: "Available" } # NEW - Near Playas
-    "A06": { location: [32.538, -116.97], status: "Available" } # NEW - Near Otay
-    "A07": { location: [32.50, -117.03], status: "Available" }  # NEW - South of Center
-    "A08": { location: [32.531, -117.015], status: "Available" } # NEW - Zona Rio East
-    "A09": { location: [32.51, -116.98], status: "Available" }  # NEW - South of Otay
+    "A04": { location: [32.525, -117.02], status: "Available" }
+    "A05": { location: [32.515, -117.115], status: "Available" }
+    "A06": { location: [32.538, -116.97], status: "Available" }
+    "A07": { location: [32.50, -117.03], status: "Available" }
+    "A08": { location: [32.531, -117.015], status: "Available" }
+    "A09": { location: [32.51, -116.98], status: "Available" }
   zones:
     "Zona Río": { polygon: [[32.52, -117.01], [32.53, -117.01], [32.53, -117.03], [32.52, -117.03]], crime: 0.7, road_quality: 0.9 }
     "Otay": { polygon: [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]], crime: 0.5, road_quality: 0.7 }
@@ -34,12 +34,12 @@ data:
       "N_H_Gen": { pos: [32.5295, -117.0182] }
       "N_H_IMSS": { pos: [32.5121, -117.0145] }
       "N_H_Ang": { pos: [32.5300, -117.0200] }
-      "N_H_CruzR": { pos: [32.528, -117.025] } # NEW
+      "N_H_CruzR": { pos: [32.5283, -117.0255] } # NEW
       "N_Amb_A01": { pos: [32.515, -117.04] }
     edges:
       - ["N_ZR1", "N_ZR2", 2.5]
       - ["N_ZR1", "N_H_Ang", 0.5]
-      - ["N_ZR1", "N_H_CruzR", 0.6] # NEW
+      - ["N_ZR1", "N_H_CruzR", 0.7] # NEW
       - ["N_ZR2", "N_H_Gen", 0.8]
       - ["N_ZR2", "N_H_IMSS", 3.0]
       - ["N_ZR1", "N_Amb_A01", 4.0]
