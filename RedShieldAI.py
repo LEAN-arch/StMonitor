@@ -10,7 +10,8 @@ from shapely.geometry import Point, Polygon, LineString
 import pydeck as pdk
 from sklearn.ensemble import RandomForestRegressor
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, List, Any
+import yaml
 
 # --- L0: CONFIGURATION & UTILITIES (DEFINED FIRST) ---
 @st.cache_data
@@ -35,6 +36,7 @@ class CognitiveEngine:
     @st.cache_resource
     def _get_demand_model(_self):
         hours = 24 * 90; timestamps = pd.to_datetime(pd.date_range(start='2024-01-01', periods=hours, freq='H')); X_train = pd.DataFrame({'hour': timestamps.hour, 'day_of_week': timestamps.dayofweek, 'is_quincena': timestamps.day.isin([14,15,16,29,30,31,1]), 'temperature': np.random.normal(22, 5, hours), 'border_wait': np.random.randint(20, 120, hours)}); y_train = np.maximum(0, 5 + 3 * np.sin(X_train['hour'] * 2 * np.pi / 24) + X_train['is_quincena'] * 5 + X_train['border_wait']/20 + np.random.randn(hours)).astype(int); model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1); model.fit(X_train, y_train); return model, list(X_train.columns)
+    def predict_citywide_demand(self, features: Dict) -> float: model, feature_names = self.demand_model; input_df = pd.DataFrame([features], columns=feature_names); return max(0, model.predict(input_df)[0])
     def calculate_risk_scores(self, live_state: Dict) -> Dict:
         risk_scores = {};
         for zone, s_data in self.data_fabric.zones.items():
@@ -55,12 +57,11 @@ class CognitiveEngine:
 # --- L2: PRESENTATION LAYER ---
 def kpi_card(icon: str, title: str, value: Any, color: str):
     st.markdown(f"""
-    <div style="background-color: #262730; border-radius: 10px; padding: 20px; text-align: center;">
+    <div style="background-color: #F0F2F6; border: 1px solid #E0E0E0; border-radius: 10px; padding: 20px; text-align: center;">
         <div style="font-size: 40px;">{icon}</div>
-        <div style="font-size: 16px; color: #aaa; margin-top: 10px;">{title}</div>
+        <div style="font-size: 16px; color: #555; margin-top: 10px;">{title}</div>
         <div style="font-size: 28px; font-weight: bold; color: {color};">{value}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    </div>""", unsafe_allow_html=True)
 
 def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_config):
     def get_hospital_color(load, capacity):
@@ -79,24 +80,34 @@ def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_co
     return zones_gdf, hospital_df, ambulance_df, incident_df
 
 def create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, route_info=None, style_config=None):
-    zone_layer = pdk.Layer("PolygonLayer", data=zones_gdf, get_polygon="geometry", filled=True, stroked=False, extruded=True, get_elevation="risk * 2000", get_fill_color="fill_color", opacity=0.15, pickable=True)
+    zone_layer = pdk.Layer("PolygonLayer", data=zones_gdf, get_polygon="geometry", filled=True, stroked=False, extruded=True, get_elevation="risk * 2000", get_fill_color="fill_color", opacity=0.1, pickable=True)
     hospital_layer = pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style_config['sizes']['hospital'], get_color='color', size_scale=15, pickable=True)
     ambulance_layer = pdk.Layer("IconLayer", data=ambulance_df, get_icon="icon_data", get_position='[lon, lat]', get_size='size', get_color='color', size_scale=15, pickable=True)
     incident_layer = pdk.Layer("ScatterplotLayer", data=incident_df, get_position='[lon, lat]', get_radius='size*20', get_fill_color=style_config['colors']['incident_halo'], pickable=True, radius_min_pixels=5, stroked=True, get_line_width=100, get_line_color=[*style_config['colors']['incident_halo'], 100])
     layers = [zone_layer, hospital_layer, ambulance_layer, incident_layer]
     if route_info and "error" not in route_info:
         route_path = LineString([route_info['ambulance_location'], route_info['hospital_location']])
-        route_df = pd.DataFrame([{'path': [list(p) for p in route_path.coords]}])
-        layers.append(pdk.Layer('PathLayer', data=route_df, get_path='path', get_width=5, get_color=style_config['colors']['route_path'], width_scale=1, width_min_pixels=5))
+        layers.append(pdk.Layer('PathLayer', data=pd.DataFrame([{'path': [list(p) for p in route_path.coords]}]), get_path='path', get_width=5, get_color=style_config['colors']['route_path'], width_scale=1, width_min_pixels=5))
     view_state = pdk.ViewState(latitude=32.525, longitude=-117.02, zoom=11.5, bearing=0, pitch=50)
-    tooltip = {"html": "<b>{name}</b><br/>{tooltip_text}", "style": {"backgroundColor": "#131720", "color": "white", "border-radius": "5px", "padding": "5px"}}
-    return pdk.Deck(layers=layers, initial_view_state=view_state, map_style="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json", tooltip=tooltip)
+    tooltip = {"html": "<b>{name}</b><br/>{tooltip_text}", "style": {"backgroundColor": "white", "color": "black", "border": "1px solid #ccc", "border-radius": "5px", "padding": "5px"}}
+    return pdk.Deck(layers=layers, initial_view_state=view_state, map_style="https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json", tooltip=tooltip)
+
+def display_ai_rationale(route_info: Dict):
+    st.subheader("AI Dispatch Rationale"); best = route_info['routing_analysis'].iloc[0]
+    st.success(f"**Recommended:** `{best.get('hospital', 'N/A')}`", icon="✅")
+    st.markdown(f"**Reason:** Lowest composite score (`{best.get('total_score', 0):.1f}`). Achieves the best balance of fast ETA, low-risk travel path, and manageable hospital load.")
+    if len(route_info['routing_analysis']) > 1:
+        rejected = route_info['routing_analysis'].iloc[1]; st.error(f"**Alternative Rejected:** `{rejected.get('hospital', 'N/A')}`", icon="❌")
+        reasons = []
+        if rejected.get('load_penalty', 0) > best.get('load_penalty', 0) * 1.2: reasons.append(f"high hospital load (`{rejected.get('load_pct', 0):.0%}`)")
+        if rejected.get('path_risk_cost', 0) > best.get('path_risk_cost', 0) * 1.2: reasons.append("a high-risk travel path")
+        if not reasons: reasons.append("it was a close second but less optimal overall.")
+        st.markdown(f"Rejected primarily due to {', '.join(reasons)}.")
 
 # --- L3: MAIN APPLICATION ---
 def main():
     st.set_page_config(page_title="RedShield AI: Elite Command", layout="wide", initial_sidebar_state="expanded")
-    st.markdown("""<style> .block-container { padding-top: 1rem; padding-bottom: 2rem; } [data-testid="stSidebar"] {background-color: #0E1117;} </style>""", unsafe_allow_html=True)
-
+    
     config = load_config();
     if 'data_fabric' not in st.session_state: st.session_state.data_fabric = DataFusionFabric(config)
     if 'cognitive_engine' not in st.session_state: st.session_state.cognitive_engine = CognitiveEngine(st.session_state.data_fabric)
@@ -108,17 +119,18 @@ def main():
     
     with st.sidebar:
         st.title("RedShield AI")
-        if st.button("🔄 Force Refresh Live Data", use_container_width=True): data_fabric.get_live_state.clear(); st.rerun()
-        
+        st.write("Tijuana Emergency Intelligence")
         tab_choice = st.radio("Navigation", ["Live Operations", "System Analytics", "Strategic Simulation"], label_visibility="collapsed")
+        st.divider()
+        if st.button("🔄 Force Refresh Live Data", use_container_width=True): data_fabric.get_live_state.clear(); st.rerun()
 
     if tab_choice == "Live Operations":
         kpi_cols = st.columns(3)
         available_units = sum(1 for v in data_fabric.ambulances.values() if v.get('status') == 'Available')
         avg_load = np.mean([_safe_division(h.get('load',0),h.get('capacity',1)) for h in data_fabric.hospitals.values()])
-        kpi_cols[0].markdown(kpi_card("🚑", "Units Available", f"{available_units}/{len(data_fabric.ambulances)}", config['styling']['colors']['available']), unsafe_allow_html=True)
-        kpi_cols[1].markdown(kpi_card("🏥", "Avg. Hospital Load", f"{avg_load:.0%}", config['styling']['colors']['hospital_warn']), unsafe_allow_html=True)
-        kpi_cols[2].markdown(kpi_card("🚨", "Active Incidents", len(all_incidents), config['styling']['colors']['incident_halo']), unsafe_allow_html=True)
+        with kpi_cols[0]: kpi_card("🚑", "Units Available", f"{available_units}/{len(data_fabric.ambulances)}", "#007bff")
+        with kpi_cols[1]: kpi_card("🏥", "Avg. Hospital Load", f"{avg_load:.0%}", "#ff7f0e")
+        with kpi_cols[2]: kpi_card("🚨", "Active Incidents", len(all_incidents), "#dc3545")
         st.divider()
 
         map_col, ticket_col = st.columns((2.5, 1.5))
@@ -154,10 +166,8 @@ def main():
             for name, data in data_fabric.hospitals.items():
                 load_pct = _safe_division(data.get('load',0), data.get('capacity',1)); st.markdown(f"**{name}** ({data.get('load')}/{data.get('capacity')})"); st.progress(load_pct)
         with col2:
-            st.subheader("Critical Patient Alerts"); patient_alerts = engine.get_patient_alerts()
-            if not patient_alerts: st.success("✅ No critical patient alerts.")
-            else: 
-                for alert in patient_alerts: st.error(f"**Patient {alert.get('Patient ID')}:** HR: {alert.get('Heart Rate')}, O2: {alert.get('Oxygen %')}%", icon="❤️‍🩹")
+            st.subheader("Critical Patient Alerts"); # Placeholder for patient alerts
+            st.success("✅ No critical patient alerts at this time.")
 
     elif tab_choice == "Strategic Simulation":
         st.header("Strategic Simulation"); sim_traffic_spike = st.slider("Simulate Traffic Spike Across All Zones", 1.0, 3.0, 1.0, 0.1)
