@@ -57,7 +57,7 @@ class CognitiveEngine:
 # --- L2: PRESENTATION LAYER ---
 def kpi_card(icon: str, title: str, value: Any, color: str):
     st.markdown(f"""
-    <div style="background-color: #F8F9FA; border: 1px solid #E0E0E0; border-radius: 10px; padding: 20px; text-align: center; height: 100%;">
+    <div style="background-color: #FFFFFF; border: 1px solid #E0E0E0; border-radius: 10px; padding: 20px; text-align: center; height: 100%;">
         <div style="font-size: 40px;">{icon}</div>
         <div style="font-size: 16px; color: #555; margin-top: 10px; text-transform: uppercase; font-weight: 600;">{title}</div>
         <div style="font-size: 28px; font-weight: bold; color: {color};">{value}</div>
@@ -75,7 +75,7 @@ def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_co
     incident_df = pd.DataFrame([{"name": f"Incident: {i.get('id', 'N/A')}", "tooltip_text": f"Priority: {i.get('priority', 1)}", "lon": i.get('location', Point(0,0)).x, "lat": i.get('location', Point(0,0)).y, "size": style_config['sizes']['incident_base'] + i.get('priority', 1)**2, "id": i.get('id')} for i in all_incidents])
     
     zones_gdf = gpd.GeoDataFrame.from_dict(data_fabric.zones, orient='index').set_geometry('polygon'); zones_gdf['name'] = zones_gdf.index; zones_gdf['risk'] = zones_gdf.index.map(risk_scores).fillna(0); zones_gdf['tooltip_text'] = ""
-    max_risk = max(1, zones_gdf['risk'].max()); zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [255, int(255*(1-_safe_division(r,max_risk))), 0, 140]).tolist()
+    max_risk = max(1, zones_gdf['risk'].max()); zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [0, 123, 255, int(255 * _safe_division(r,max_risk))]).tolist() # Blue tint for risk
     
     return zones_gdf, hospital_df, ambulance_df, incident_df
 
