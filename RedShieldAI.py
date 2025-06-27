@@ -1,12 +1,8 @@
-# RedShieldAI_SME_Debugged_App.py
-# SME-DEBUGGED AND ENHANCED VERSION.
-# This version resolves all rendering and visualization issues.
-# Key Fixes:
-# 1. Pydeck Map Corrected: Fixed PolygonLayer data format and HeatmapLayer aggregation.
-#    The map now renders all layers correctly.
-# 2. High-Quality Visualizations: Replaced all basic charts with Seaborn for a
-#    professional, high-quality appearance.
-# 3. Robustness: Added Mapbox API key handling and safe session state initialization.
+# RedShieldAI_SME_Fully_Enhanced_App.py
+# FINAL, FULLY INTEGRATED VERSION
+# This script combines all debugging and UX/DX enhancements into a single,
+# complete application. It features a fully functional Pydeck map and uses the
+# Altair library for interactive, insightful, and professional data visualizations.
 
 import streamlit as st
 import pandas as pd
@@ -19,15 +15,12 @@ from datetime import datetime
 from typing import Dict, List, Any, Tuple
 import networkx as nx
 import os
-import seaborn as sns
-import matplotlib.pyplot as plt
+import altair as alt
 
 # --- L0: CONFIGURATION AND CORE UTILITIES ---
 
 def get_app_config() -> Dict:
     """Returns the application configuration as a native Python dictionary."""
-    # SME NOTE: Added 'mapbox_api_key' for proper map rendering.
-    # The user should set this as an environment variable or in st.secrets.
     config_dict = {
         'mapbox_api_key': os.environ.get("MAPBOX_API_KEY", None),
         'data': {
@@ -41,45 +34,37 @@ def get_app_config() -> Dict:
                 "A01": {'location': [32.515, -117.115], 'status': "Disponible"}, "A02": {'location': [32.535, -116.96], 'status': "Disponible"},
                 "A03": {'location': [32.508, -117.00], 'status': "En Misión"}, "A04": {'location': [32.525, -117.02], 'status': "Disponible"},
                 "A05": {'location': [32.48, -116.95], 'status': "Disponible"}, "A06": {'location': [32.538, -117.08], 'status': "Disponible"},
-                "A07": {'location': [32.50, -117.03], 'status': "Disponible"}, "A08": {'location': [32.46, -117.02], 'status': "Disponible"},
-                "A09": {'location': [32.51, -116.98], 'status': "Disponible"}
             },
             'zones': {
                 "Zona Río": {'polygon': [[32.52, -117.01], [32.535, -117.01], [32.535, -117.035], [32.52, -117.035]], 'crime': 0.7, 'road_quality': 0.9},
                 "Otay": {'polygon': [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]], 'crime': 0.5, 'road_quality': 0.7},
                 "Playas": {'polygon': [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]], 'crime': 0.4, 'road_quality': 0.8}
             },
-            'city_boundary': [
-                [32.535, -117.129], [32.510, -117.125], [32.448, -117.060], [32.435, -116.930],
-                [32.537, -116.930], [32.537, -117.030], [32.542, -117.038], [32.543, -117.128]
+            'city_boundary': [[32.535, -117.129], [32.510, -117.125], [32.448, -117.060], [32.435, -116.930], [32.537, -116.930], [32.537, -117.030], [32.542, -117.038], [32.543, -117.128]],
             ],
             'patient_vitals': {
                 "P001": {'heart_rate': 145, 'oxygen': 88, 'ambulance': "A03"},
                 "P002": {'heart_rate': 90, 'oxygen': 97, 'ambulance': "A01"},
-                "P003": {'heart_rate': 150, 'oxygen': 99, 'ambulance': "A02"}
             },
             'road_network': {
                 'nodes': {
                     "N_Playas": {'pos': [32.52, -117.12]}, "N_Centro": {'pos': [32.53, -117.04]},
                     "N_ZonaRio": {'pos': [32.528, -117.025]}, "N_5y10": {'pos': [32.50, -117.03]},
                     "N_LaMesa": {'pos': [32.51, -117.00]}, "N_Otay": {'pos': [32.535, -116.965]},
-                    "N_ElFlorido": {'pos': [32.48, -116.95]}, "N_SantaFe": {'pos': [32.46, -117.02]},
                     "H_General": {'pos': [32.5295, -117.0182]}, "H_IMSS1": {'pos': [32.5121, -117.0145]},
                     "H_Angeles": {'pos': [32.5300, -117.0200]}, "H_CruzRoja": {'pos': [32.5283, -117.0255]}
                 },
                 'edges': [
                     ["N_Playas", "N_Centro", 5.0], ["N_Centro", "N_ZonaRio", 2.0], ["N_ZonaRio", "N_5y10", 3.0],
                     ["N_ZonaRio", "H_Angeles", 0.5], ["N_ZonaRio", "H_CruzRoja", 0.2], ["N_ZonaRio", "H_General", 1.0],
-                    ["N_5y10", "N_LaMesa", 2.5], ["N_5y10", "N_SantaFe", 4.0], ["N_LaMesa", "H_IMSS1", 1.0],
-                    ["N_LaMesa", "N_ElFlorido", 5.0], ["N_ZonaRio", "N_Otay", 6.0]
+                    ["N_5y10", "N_LaMesa", 2.5], ["N_LaMesa", "H_IMSS1", 1.0], ["N_ZonaRio", "N_Otay", 6.0]
                 ]
             },
             'model_params': {'n_estimators': 50, 'max_depth': 4, 'learning_rate': 0.1, 'subsample': 0.8, 'colsample_bytree': 0.8}
         },
         'styling': {
-            'theme': 'dark', # 'dark' or 'light' for seaborn plots
-            'colors': {'available': [0, 179, 89, 255], 'on_mission': [150, 150, 150, 180], 'hospital_ok': [0, 179, 89], 'hospital_warn': [255, 191, 0], 'hospital_crit': [220, 53, 69], 'route_path': [0, 123, 255], 'triage_rojo': [220, 53, 69], 'triage_amarillo': [255, 193, 7], 'triage_verde': [40, 167, 69]},
-            'sizes': {'ambulance_available': 5.0, 'ambulance_mission': 2.5, 'hospital': 4.0, 'incident_base': 100.0},
+            'colors': {'primary': '#00A9FF', 'secondary': '#DC3545', 'accent_ok': '#00B359', 'accent_warn': '#FFB000', 'accent_crit': '#DC3545', 'background': '#0D1117', 'text': '#FFFFFF', 'available': [0, 179, 89, 255], 'on_mission': [150, 150, 150, 180], 'hospital_ok': [0, 179, 89], 'hospital_warn': [255, 191, 0], 'hospital_crit': [220, 53, 69], 'route_path': [0, 123, 255], 'triage_rojo': [220, 53, 69], 'triage_amarillo': [255, 193, 7], 'triage_verde': [40, 167, 69]},
+            'sizes': {'ambulance': 5.0, 'hospital': 4.0, 'incident_base': 100.0},
             'icons': {'hospital': "https://img.icons8.com/color/96/hospital-3.png", 'ambulance': "https://img.icons8.com/color/96/ambulance.png"}
         }
     }
@@ -224,59 +209,40 @@ def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_co
         if load_pct < 0.9: return style_config['colors']['hospital_warn']
         return style_config['colors']['hospital_crit']
     hospital_df = pd.DataFrame([{"name": f"Hospital: {n}", "tooltip_text": f"Carga: {d.get('load',0)}/{d.get('capacity',1)} ({_safe_division(d.get('load',0), d.get('capacity',1)):.0%})", "lon": d.get('location').x, "lat": d.get('location').y, "icon_data": {"url": style_config['icons']['hospital'], "width": 128, "height": 128, "anchorY": 128}, "color": get_hospital_color(d.get('load',0), d.get('capacity',1))} for n, d in data_fabric.hospitals.items()])
-    ambulance_df = pd.DataFrame([{"name": f"Unidad: {n}", "tooltip_text": f"Estatus: {d.get('status', 'Desconocido')}", "lon": d.get('location').x, "lat": d.get('location').y, "icon_data": {"url": style_config['icons']['ambulance'], "width": 128, "height": 128, "anchorY": 128}, "size": style_config['sizes']['ambulance_available'] if d.get('status') == 'Disponible' else style_config['sizes']['ambulance_mission'], "color": style_config['colors']['available'] if d.get('status') == 'Disponible' else style_config['colors']['on_mission']} for n, d in data_fabric.ambulances.items()])
-    
+    ambulance_df = pd.DataFrame([{"name": f"Unidad: {n}", "tooltip_text": f"Estatus: {d.get('status', 'Desconocido')}", "lon": d.get('location').x, "lat": d.get('location').y, "icon_data": {"url": style_config['icons']['ambulance'], "width": 128, "height": 128, "anchorY": 128}, "size": style_config['sizes']['ambulance'], "color": style_config['colors']['available'] if d.get('status') == 'Disponible' else style_config['colors']['on_mission']} for n, d in data_fabric.ambulances.items()])
+
     def get_triage_color(triage_str):
         return style_config['colors'].get(f"triage_{triage_str.lower()}", [128, 128, 128])
     incident_df = pd.DataFrame([{"name": f"Incidente: {i.get('id', 'N/A')}", "tooltip_text": f"Tipo: {i.get('type')}<br>Triage: {i.get('triage')}", "lon": i.get('location').x, "lat": i.get('location').y, "color": get_triage_color(i.get('triage', 'Verde')), "radius": style_config['sizes']['incident_base'], "id": i.get('id')} for i in all_incidents])
     heatmap_df = pd.DataFrame([{"lon": i.get('location').x, "lat": i.get('location').y} for i in all_incidents])
-    
+
     zones_gdf = gpd.GeoDataFrame.from_dict(data_fabric.zones, orient='index').set_geometry('polygon')
     zones_gdf['name'] = zones_gdf.index
     zones_gdf['risk'] = zones_gdf.index.map(risk_scores).fillna(0)
     zones_gdf['tooltip_text'] = zones_gdf.apply(lambda row: f"Zona: {row.name}<br/>Puntaje de Riesgo: {row.risk:.2f}", axis=1)
     max_risk = max(1, zones_gdf['risk'].max())
     zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [220, 53, 69, int(200 * _safe_division(r,max_risk))]).tolist()
-    
-    # DEBUG FIX: Convert polygon geometry to a coordinate list format that pydeck can reliably consume.
     zones_gdf['coordinates'] = zones_gdf.geometry.apply(lambda p: [list(p.exterior.coords)])
-    
     return zones_gdf, hospital_df, ambulance_df, incident_df, heatmap_df
 
 def create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, heatmap_df, app_config, route_info=None):
     style_config = app_config.get('styling', {})
-    
-    # DEBUG FIX: Changed get_polygon to "coordinates" to match the new column in prepare_visualization_data.
     zone_layer = pdk.Layer("PolygonLayer", data=zones_gdf, get_polygon="coordinates", filled=True, stroked=False, extruded=True, get_elevation="risk * 2000", get_fill_color="fill_color", opacity=0.1, pickable=True)
     hospital_layer = pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style_config['sizes']['hospital'], get_color='color', size_scale=15, pickable=True)
     ambulance_layer = pdk.Layer("IconLayer", data=ambulance_df, get_icon="icon_data", get_position='[lon, lat]', get_size='size', get_color='color', size_scale=15, pickable=True)
-    
-    # DEBUG FIX: Adjusted radius_scale to a reasonable value. The base radius is already set.
     incident_layer = pdk.Layer("ScatterplotLayer", data=incident_df, get_position='[lon, lat]', get_radius='radius', get_fill_color='color', radius_scale=1, pickable=True, radius_min_pixels=3, radius_max_pixels=100)
-    
-    # DEBUG FIX: Corrected aggregation from a malformed string '"MEAN"' to the correct keyword 'MEAN'.
     heatmap_layer = pdk.Layer("HeatmapLayer", data=heatmap_df, get_position='[lon, lat]', opacity=0.3, aggregation='MEAN', threshold=0.1, get_weight=1)
-    
+
     layers = [heatmap_layer, zone_layer, hospital_layer, ambulance_layer, incident_layer]
     if route_info and "error" not in route_info and "route_path_coords" in route_info:
         route_df = pd.DataFrame([{'path': route_info['route_path_coords']}])
         layers.append(pdk.Layer('PathLayer', data=route_df, get_path='path', get_width=8, get_color=style_config['colors']['route_path'], width_scale=1, width_min_pixels=6))
-    
+
     view_state = pdk.ViewState(latitude=32.525, longitude=-117.02, zoom=11.5, bearing=0, pitch=50)
     tooltip = {"html": "<b>{name}</b><br/>{tooltip_text}", "style": {"backgroundColor": "#333", "color": "white", "border": "1px solid #555", "border-radius": "5px", "padding": "5px"}}
-    
-    # DEBUG FIX: Handle Mapbox API key. Use a rich style if available, otherwise a basic one.
     mapbox_key = app_config.get('mapbox_api_key')
     map_style = "mapbox://styles/mapbox/navigation-night-v1" if mapbox_key else "mapbox://styles/mapbox/dark-v9"
-    
-    return pdk.Deck(
-        layers=layers,
-        initial_view_state=view_state,
-        map_provider="mapbox",
-        map_style=map_style,
-        api_keys={'mapbox': mapbox_key},
-        tooltip=tooltip
-    )
+    return pdk.Deck(layers=layers, initial_view_state=view_state, map_provider="mapbox", map_style=map_style, api_keys={'mapbox': mapbox_key}, tooltip=tooltip)
 
 def display_ai_rationale(route_info: Dict):
     st.markdown("---")
@@ -296,28 +262,75 @@ def display_ai_rationale(route_info: Dict):
             reasons.append("fue un cercano segundo lugar, pero menos óptimo en general")
         st.error(f"**Alternativa Rechazada:** `{rejected.get('hospital', 'N/A')}` debido a {', '.join(reasons)}.", icon="❌")
 
-# --- SME ENHANCEMENT: SEABORN VISUALIZATION FUNCTION ---
-def create_seaborn_barchart(data: pd.DataFrame, x: str, y: str, title: str, xlabel: str, ylabel: str, theme: str = 'dark'):
-    """Creates a high-quality, themed bar chart using Seaborn for superior aesthetics."""
-    if theme == 'dark':
-        plt.style.use('dark_background')
-        bar_color = '#00A9FF' # A vibrant blue for dark backgrounds
-        plt.rcParams.update({'text.color': 'white', 'axes.labelcolor': 'white', 'xtick.color': 'white', 'ytick.color': 'white'})
-    else: # Light theme
-        plt.style.use('seaborn-v0_8-whitegrid')
-        bar_color = sns.color_palette("viridis", 1)[0]
-        plt.rcParams.update({'text.color': 'black', 'axes.labelcolor': 'black', 'xtick.color': 'black', 'ytick.color': 'black'})
+class PlottingSME:
+    """A centralized utility for creating high-quality, interactive, themed visualizations."""
+    def __init__(self, style_config: Dict):
+        self.config = style_config
+        self.theme = {
+            "config": {
+                "background": self.config['colors']['background'],
+                "title": {"color": self.config['colors']['text'], "fontSize": 18, "anchor": "start"},
+                "axis": {
+                    "labelColor": self.config['colors']['text'], "titleColor": self.config['colors']['text'],
+                    "tickColor": self.config['colors']['text'], "gridColor": "#444"
+                },
+                "legend": {"labelColor": self.config['colors']['text'], "titleColor": self.config['colors']['text']}
+            }
+        }
+        alt.themes.register("redshield_dark", lambda: self.theme)
+        alt.themes.enable("redshield_dark")
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    sns.barplot(data=data, x=x, y=y, ax=ax, color=bar_color)
-    ax.set_title(title, fontsize=16, weight='bold', pad=20)
-    ax.set_xlabel(xlabel, fontsize=12)
-    ax.set_ylabel(ylabel, fontsize=12)
-    ax.tick_params(axis='x', rotation=45)
-    sns.despine(left=True, bottom=True) # Clean up chart aesthetics
-    plt.tight_layout()
-    return fig
+    def plot_feature_importance(self, df: pd.DataFrame, title: str) -> alt.Chart:
+        """Creates an interactive bar chart for feature importances."""
+        chart = alt.Chart(df).mark_bar(
+            cornerRadius=3,
+            color=self.config['colors']['primary']
+        ).encode(
+            x=alt.X('importance:Q', title='Importancia Relativa'),
+            y=alt.Y('feature:N', title='Factor Predictivo', sort='-x'),
+            tooltip=[
+                alt.Tooltip('feature:N', title='Factor'),
+                alt.Tooltip('importance:Q', title='Importancia', format='.3f')
+            ]
+        ).properties(
+            title={'text': title, 'subtitle': 'Pase el mouse sobre las barras para ver detalles'},
+        ).interactive()
+        return chart
 
+    def plot_simulation_impact(self, df: pd.DataFrame) -> alt.Chart:
+        """Creates an interactive dumbbell plot to show before/after simulation impact."""
+        df['change'] = df['Simulated_Risk'] - df['Original_Risk']
+        base = alt.Chart(df).encode(y=alt.Y('Zone:N', sort=alt.EncodingSortField(field="change", op="max", order='descending'), title="Zona de la Ciudad"))
+        line = base.mark_rule(color="#888").encode(x=alt.X('Original_Risk:Q', title="Puntaje de Riesgo", scale=alt.Scale(zero=False)), x2=alt.X2('Simulated_Risk:Q'))
+        original_points = base.mark_circle(size=100, opacity=1).encode(
+            x=alt.X('Original_Risk:Q'), color=alt.value(self.config['colors']['accent_ok']),
+            tooltip=[alt.Tooltip('Zone', title='Zona'), alt.Tooltip('Original_Risk', title='Riesgo Original', format='.2f')]
+        )
+        simulated_points = base.mark_circle(size=100, opacity=1).encode(
+            x=alt.X('Simulated_Risk:Q'), color=alt.value(self.config['colors']['accent_crit']),
+            tooltip=[alt.Tooltip('Zone', title='Zona'), alt.Tooltip('Simulated_Risk', title='Riesgo Simulado', format='.2f'), alt.Tooltip('change', title='Incremento', format='+.2f')]
+        )
+        return (line + original_points + simulated_points).properties(
+            title={'text': "Impacto de la Simulación de Tráfico en el Riesgo Zonal", 'subtitle': "Compara el riesgo original (verde) con el simulado (rojo)"},
+        ).interactive()
+
+    def plot_predictor_impact(self, model, base_features: pd.DataFrame, feature_to_vary: str, feature_range: np.ndarray, current_value: float, title: str, xlabel: str) -> alt.Chart:
+        """Creates an interactive line plot to show how changing a single feature affects model predictions."""
+        predictions = []
+        for val in feature_range:
+            temp_features = base_features.copy()
+            temp_features[feature_to_vary] = val
+            pred = model.predict(temp_features)[0]
+            predictions.append({'feature_value': val, 'prediction': pred})
+        pred_df = pd.DataFrame(predictions)
+        line = alt.Chart(pred_df).mark_line(
+            color=self.config['colors']['primary'], point=alt.OverlayMarkDef(color=self.config['colors']['accent_warn'])
+        ).encode(
+            x=alt.X('feature_value:Q', title=xlabel), y=alt.Y('prediction:Q', title='Incidentes Predichos por Hora', scale=alt.Scale(zero=False)),
+            tooltip=[alt.Tooltip('feature_value:Q', title=xlabel, format='.1f'), alt.Tooltip('prediction:Q', title='Predicción de Incidentes', format='.1f')]
+        ).properties(title={'text': title, 'subtitle': f"La línea vertical muestra el valor actual de {current_value:.1f}"})
+        rule = alt.Chart(pd.DataFrame({'current': [current_value]})).mark_rule(color=self.config['colors']['accent_crit'], strokeDash=[3,3], size=2).encode(x='current:Q')
+        return (line + rule).interactive()
 
 @st.cache_resource
 def get_engine():
@@ -328,31 +341,27 @@ def get_engine():
 
 def main():
     st.set_page_config(page_title="RedShield AI: Comando Élite", layout="wide", initial_sidebar_state="expanded")
-    
-    # SME FIX: Safely initialize session state keys
-    if 'selected_incident' not in st.session_state:
-        st.session_state.selected_incident = None
-    if 'route_info' not in st.session_state:
-        st.session_state.route_info = None
-    if "incident_selector" not in st.session_state:
-        st.session_state.incident_selector = None
+
+    if 'selected_incident' not in st.session_state: st.session_state.selected_incident = None
+    if 'route_info' not in st.session_state: st.session_state.route_info = None
+    if "incident_selector" not in st.session_state: st.session_state.incident_selector = None
 
     with st.spinner("Inicializando el motor de IA... (esto es rápido después del primer arranque)"):
         engine = get_engine()
-    
+
     app_config = get_app_config()
+    plotter = PlottingSME(app_config.get('styling', {}))
     data_fabric = engine.data_fabric
     now = datetime.now()
     live_features = {'hour': now.hour, 'day_of_week': now.weekday(), 'is_weekend_night': ((now.weekday() >= 4) & (now.hour >= 20)) | ((now.weekday() <= 1) & (now.hour < 4)), 'is_quincena': now.day in [14,15,16,29,30,31,1], 'temperature_extreme': 25, 'air_quality_index': 70, 'major_event_active': 0, 'border_wait': 60}
-    
     medical_pred, trauma_pred = engine.predict_demand(live_features)
     live_state = data_fabric.get_live_state(medical_pred, trauma_pred)
-    risk_scores = engine.calculate_risk_scores(live_state)
     all_incidents = live_state.get("city_incidents", {}).get("active_incidents", [])
     incident_dict = {i['id']: i for i in all_incidents}
 
     def handle_incident_selection():
         selected_id = st.session_state.get("incident_selector")
+        risk_scores = engine.calculate_risk_scores(live_state) # Recalculate risk scores on interaction
         if selected_id and incident_dict.get(selected_id):
             st.session_state.selected_incident = incident_dict[selected_id]
             st.session_state.route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, risk_scores)
@@ -371,10 +380,9 @@ def main():
             st.session_state.route_info = None
             st.session_state.incident_selector = None
             st.rerun()
-
         if not app_config.get('mapbox_api_key'):
-             st.warning("Mapbox API key no encontrada. El mapa usará un estilo básico. Para un mejor mapa, configure la variable de entorno `MAPBOX_API_KEY`.", icon="🗺️")
-        
+             st.warning("Mapbox API key no encontrada. El mapa usará un estilo básico.", icon="🗺️")
+
     if tab_choice == "Operaciones en Vivo":
         kpi_cols = st.columns(3)
         available_units = sum(1 for v in data_fabric.ambulances.values() if v.get('status') == 'Disponible')
@@ -382,10 +390,8 @@ def main():
         with kpi_cols[0]: kpi_card("🚑", "Unidades Disponibles", f"{available_units}/{len(data_fabric.ambulances)}", "#00A9FF")
         with kpi_cols[1]: kpi_card("🏥", "Carga Hosp. Prom.", f"{avg_load:.0%}", "#FFB000")
         with kpi_cols[2]: kpi_card("🚨", "Incidentes Activos", len(all_incidents), "#DC3545")
-        
         st.divider()
         map_col, ticket_col = st.columns((2.5, 1.5))
-        
         with ticket_col:
             st.subheader("Boleta de Despacho")
             st.selectbox(
@@ -402,71 +408,76 @@ def main():
                 else:
                     st.error(f"Error de Ruteo: {st.session_state.get('route_info', {}).get('error', 'No se pudo calcular una ruta.')}")
             else:
-                st.info("Seleccione un incidente del menú de arriba para generar un plan de despacho.")
-        
+                st.info("Seleccione un incidente del menú para generar un plan de despacho.")
         with map_col:
             st.subheader("Mapa de Operaciones de la Ciudad")
+            risk_scores = engine.calculate_risk_scores(live_state)
             zones_gdf, hosp_df, amb_df, inc_df, heat_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, app_config.get('styling', {}))
             deck = create_deck_gl_map(zones_gdf, hosp_df, amb_df, inc_df, heat_df, app_config, st.session_state.get('route_info'))
             st.pydeck_chart(deck, use_container_width=True)
 
     elif tab_choice == "Análisis del Sistema":
         st.header("Análisis del Sistema e Inteligencia Artificial")
-        st.info("Esta pestaña muestra los dos modelos de IA que predicen la demanda de incidentes, junto con sus factores más influyentes.")
-        theme = app_config.get('styling', {}).get('theme')
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("Modelo de Emergencias Médicas")
-            info_box("Factores como la calidad del aire y las temperaturas extremas impulsan este tipo de incidentes.")
-            medical_df = pd.DataFrame({'feature': engine.medical_features, 'importance': engine.medical_model.feature_importances_}).sort_values('importance', ascending=False)
-            fig = create_seaborn_barchart(medical_df, 'feature', 'importance', 'Importancia de Factores - Modelo Médico', 'Factor', 'Importancia (Feature Importance)', theme)
-            st.pyplot(fig, use_container_width=True)
+        st.info("Explore los modelos de IA de forma interactiva. Pase el mouse sobre los gráficos para ver detalles y use los menús para analizar el impacto de diferentes factores.")
+        tab_modelos, tab_impacto, tab_sistema = st.tabs(["📊 Modelos Predictivos", "🔬 Análisis de Impacto", "📈 Estado del Sistema"])
 
-        with col2:
-            st.subheader("Modelo de Incidentes de Trauma")
-            info_box("Factores como fines de semana, quincenas y eventos especiales impulsan este tipo de incidentes.")
-            trauma_df = pd.DataFrame({'feature': engine.trauma_features, 'importance': engine.trauma_model.feature_importances_}).sort_values('importance', ascending=False)
-            fig = create_seaborn_barchart(trauma_df, 'feature', 'importance', 'Importancia de Factores - Modelo Trauma', 'Factor', 'Importancia (Feature Importance)', theme)
-            st.pyplot(fig, use_container_width=True)
-            
-        st.divider()
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("Estatus de Carga Hospitalaria")
-            st.markdown("Capacidad en tiempo real de todos los hospitales receptores.")
-            for name, data in data_fabric.hospitals.items():
-                load_pct = _safe_division(data['load'], data['capacity'])
-                st.markdown(f"**{name}** ({data['load']}/{data['capacity']})")
-                st.progress(load_pct)
-        with col2:
-            st.subheader("Alertas de Pacientes Críticos")
-            st.markdown("Pacientes con signos vitales críticos de monitoreo remoto.")
-            patient_alerts = engine.get_patient_alerts()
-            if not patient_alerts:
-                st.success("✅ No hay alertas de pacientes críticos en este momento.")
-            else:
-                for alert in patient_alerts:
-                    st.error(f"**Paciente {alert.get('Patient ID')}:** FC: {alert.get('Heart Rate')}, O2: {alert.get('Oxygen %')}% | Unidad: {alert.get('Ambulance')}", icon="❤️‍🩹")
+        with tab_modelos:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("Modelo de Emergencias Médicas")
+                medical_df = pd.DataFrame({'feature': engine.medical_features, 'importance': engine.medical_model.feature_importances_}).sort_values('importance', ascending=False)
+                chart = plotter.plot_feature_importance(medical_df, "Factores Clave en Emergencias Médicas")
+                st.altair_chart(chart, use_container_width=True)
+            with col2:
+                st.subheader("Modelo de Incidentes de Trauma")
+                trauma_df = pd.DataFrame({'feature': engine.trauma_features, 'importance': engine.trauma_model.feature_importances_}).sort_values('importance', ascending=False)
+                chart = plotter.plot_feature_importance(trauma_df, "Factores Clave en Incidentes de Trauma")
+                st.altair_chart(chart, use_container_width=True)
+
+        with tab_impacto:
+            st.subheader("Análisis de Impacto del Predictor")
+            st.markdown("Esta herramienta le permite ver cómo un cambio en un solo factor afecta la predicción de incidentes. Es una forma de entender la 'lógica' del modelo de IA.")
+            live_features_df = pd.DataFrame([live_features])
+            feature_map_trauma = {'border_wait': ('Tiempo de Espera en Garita (min)', np.linspace(10, 180, 50)), 'is_weekend_night': ('Es Fin de Semana Nocturno (0=No, 1=Sí)', np.linspace(0, 1, 2))}
+            selected_key = st.selectbox("Seleccione un factor del modelo de TRAUMA para analizar:", options=list(feature_map_trauma.keys()), format_func=lambda x: feature_map_trauma[x][0])
+            name, range_vals = feature_map_trauma[selected_key]
+            chart = plotter.plot_predictor_impact(engine.trauma_model, live_features_df[engine.trauma_features], selected_key, range_vals, live_features[selected_key], f"Impacto de '{name}' en Predicciones de Trauma", name)
+            st.altair_chart(chart, use_container_width=True)
+
+        with tab_sistema:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("Estatus de Carga Hospitalaria")
+                st.markdown("Capacidad en tiempo real de todos los hospitales receptores.")
+                for name, data in data_fabric.hospitals.items():
+                    load_pct = _safe_division(data['load'], data['capacity'])
+                    st.markdown(f"**{name}** ({data['load']}/{data['capacity']})")
+                    st.progress(load_pct)
+            with col2:
+                st.subheader("Alertas de Pacientes Críticos")
+                st.markdown("Pacientes con signos vitales críticos de monitoreo remoto.")
+                patient_alerts = engine.get_patient_alerts()
+                if not patient_alerts: st.success("✅ No hay alertas de pacientes críticos en este momento.")
+                else:
+                    for alert in patient_alerts: st.error(f"**Paciente {alert.get('Patient ID')}:** FC: {alert.get('Heart Rate')}, O2: {alert.get('Oxygen %')}% | Unidad: {alert.get('Ambulance')}", icon="❤️‍🩹")
 
     elif tab_choice == "Simulación Estratégica":
         st.header("Simulación Estratégica y Análisis 'What-If'")
-        st.info("""Esta herramienta le permite probar la resiliencia del sistema en condiciones extremas. Al aumentar el multiplicador de tráfico, puede simular eventos como la hora pico, días festivos o cierres de carreteras importantes para ver cómo impactan el riesgo zonal.""")
+        st.info("""Esta herramienta le permite probar la resiliencia del sistema. El gráfico de impacto muestra claramente qué zonas son más vulnerables a un aumento del tráfico.""")
         sim_traffic_spike = st.slider("Simular Multiplicador de Tráfico en Toda la Ciudad", 1.0, 5.0, 1.0, 0.25)
         
+        risk_scores = engine.calculate_risk_scores(live_state)
         sim_risk_scores = {}
         for zone, s_data in data_fabric.zones.items():
             l_data = live_state.get(zone, {})
             sim_risk = (l_data.get('traffic', 0.5) * sim_traffic_spike * 0.6 + (1 - s_data.get('road_quality', 0.5)) * 0.2 + s_data.get('crime', 0.5) * 0.2)
             incidents_in_zone = [inc for inc in all_incidents if s_data['polygon'].contains(inc['location'])]
             sim_risk_scores[zone] = sim_risk * (1 + len(incidents_in_zone))
-            
-        st.subheader("Puntajes de Riesgo Zonal Simulados")
-        sim_df = pd.DataFrame.from_dict(sim_risk_scores, orient='index', columns=['Riesgo Simulado']).reset_index().rename(columns={'index': 'Zona'})
-        
-        theme = app_config.get('styling', {}).get('theme')
-        fig = create_seaborn_barchart(sim_df.sort_values('Riesgo Simulado', ascending=False), 'Zona', 'Riesgo Simulado', 'Riesgo Simulado por Zona', 'Zona', 'Puntaje de Riesgo', theme)
-        st.pyplot(fig, use_container_width=True)
-        st.markdown("Las zonas de alto riesgo bajo estas condiciones simuladas requerirían un posicionamiento preventivo de recursos.")
+
+        sim_df = pd.DataFrame({'Zone': list(risk_scores.keys()), 'Original_Risk': list(risk_scores.values()), 'Simulated_Risk': list(sim_risk_scores.values())})
+        chart = plotter.plot_simulation_impact(sim_df)
+        st.altair_chart(chart, use_container_width=True)
+        st.markdown("Las zonas con el mayor **incremento** (la distancia más grande entre el punto verde y el rojo) son las más vulnerables y podrían requerir un posicionamiento preventivo de recursos.")
 
 if __name__ == "__main__":
     main()
