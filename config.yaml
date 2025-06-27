@@ -15,7 +15,6 @@ data:
     "P001": { heart_rate: 145, oxygen: 88, ambulance: "A03" }
     "P002": { heart_rate: 90, oxygen: 97, ambulance: "A01" }
     "P003": { heart_rate: 150, oxygen: 99, ambulance: "A02" }
-
 styling:
   colors:
     available: [0, 179, 89, 255]
@@ -30,7 +29,6 @@ styling:
     ambulance_mission: 2.5
     hospital: 4.0
     incident_base: 5.0
-  # BUG FIX: Added the missing 'icons' section
   icons:
     hospital: "https://img.icons8.com/color/96/hospital-3.png"
     ambulance: "https://img.icons8.com/color/96/ambulance.png"
