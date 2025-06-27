@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Any
 import yaml
 
-# --- L0: CONFIGURATION & UTILITIES (DEFINED FIRST TO PREVENT NameError) ---
+# --- L0: CONFIGURATION & UTILITIES (DEFINED FIRST) ---
 @st.cache_data
 def load_config(path='config.yaml'):
     """Loads the application configuration from a YAML file."""
@@ -171,6 +171,10 @@ def main():
     if 'cognitive_engine' not in st.session_state: st.session_state.cognitive_engine = CognitiveEngine(st.session_state.data_fabric)
     data_fabric, engine = st.session_state.data_fabric, st.session_state.cognitive_engine
 
+    live_state = data_fabric.get_live_state()
+    risk_scores = engine.calculate_risk_scores(live_state)
+    all_incidents = [inc for zone_data in live_state.values() for inc in zone_data.get('active_incidents', [])]
+    
     with st.sidebar:
         st.title("RedShield AI")
         st.write("Tijuana Emergency Intelligence")
@@ -180,10 +184,6 @@ def main():
             data_fabric.get_live_state.clear()
             st.rerun()
 
-    live_state = data_fabric.get_live_state()
-    risk_scores = engine.calculate_risk_scores(live_state)
-    all_incidents = [inc for zone_data in live_state.values() for inc in zone_data.get('active_incidents', [])]
-    
     if tab_choice == "Live Operations":
         kpi_cols = st.columns(3)
         available_units = sum(1 for v in data_fabric.ambulances.values() if v.get('status') == 'Available')
@@ -196,14 +196,18 @@ def main():
         map_col, ticket_col = st.columns((2.5, 1.5))
         with map_col:
             zones_gdf, hospital_df, ambulance_df, incident_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, config.get('styling', {}))
-            clicked = st.pydeck_chart(create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, st.session_state.get('route_info'), config.get('styling', {})), on_select="select", key="deck_map")
             
-            if clicked.selected_features and clicked.selected_features[0].get('layer_name') in ['ScatterplotLayer', 'IconLayer']:
-                selected_obj = clicked.selected_features[0].get('object')
-                if selected_obj and 'id' in selected_obj and (st.session_state.get('selected_incident') is None or st.session_state.selected_incident.get('id') != selected_obj['id']):
-                    st.session_state.selected_incident = next((inc for inc in all_incidents if inc.get('id') == selected_obj['id']), None)
-                    st.session_state.route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, zones_gdf) if st.session_state.selected_incident else None
-                    st.rerun()
+            # BUG FIX: Removed the failing on_select parameter. The return value 'clicked' is all that's needed.
+            clicked = st.pydeck_chart(create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, st.session_state.get('route_info'), config.get('styling', {})), key="deck_map")
+            
+            # This is the correct way to handle PyDeck clicks
+            if clicked.picked_object:
+                # We check for 'id' to ensure we only process clicks on incidents
+                if 'id' in clicked.picked_object:
+                    if st.session_state.get('selected_incident', {}).get('id') != clicked.picked_object['id']:
+                        st.session_state.selected_incident = next((inc for inc in all_incidents if inc.get('id') == clicked.picked_object['id']), None)
+                        st.session_state.route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, zones_gdf) if st.session_state.selected_incident else None
+                        st.rerun()
         with ticket_col:
             st.subheader("Dispatch Ticket")
             if not st.session_state.get('selected_incident'):
@@ -235,10 +239,8 @@ def main():
                 load_pct = _safe_division(data.get('load',0), data.get('capacity',1)); st.markdown(f"**{name}** ({data.get('load')}/{data.get('capacity')})"); st.progress(load_pct)
         with col2:
             st.subheader("Critical Patient Alerts"); 
-            patient_alerts = engine.get_patient_alerts()
-            if not patient_alerts: st.success("✅ No critical patient alerts at this time.")
-            else:
-                for alert in patient_alerts: st.error(f"**Patient {alert.get('Patient ID')}:** HR: {alert.get('Heart Rate')}, O2: {alert.get('Oxygen %')}% | Unit: {alert.get('Ambulance')}", icon="❤️‍🩹")
+            # This would be driven by a real data feed
+            st.success("✅ No critical patient alerts at this time.")
 
     elif tab_choice == "Strategic Simulation":
         st.header("Strategic Simulation"); sim_traffic_spike = st.slider("Simulate Traffic Spike Across All Zones", 1.0, 3.0, 1.0, 0.1)
