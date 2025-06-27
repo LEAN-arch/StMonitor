@@ -6,17 +6,17 @@ data:
     "Hospital General": { location: [32.5295, -117.0182], capacity: 100, load: 85 }
     "IMSS Clínica 1": { location: [32.5121, -117.0145], capacity: 120, load: 70 }
     "Angeles": { location: [32.5300, -117.0200], capacity: 100, load: 95 }
-    "Cruz Roja Tijuana": { location: [32.5283, -117.0255], capacity: 70, load: 60 } # Geocoded to Alfonso Gamboa
+    "Cruz Roja Tijuana": { location: [32.5283, -117.0255], capacity: 80, load: 60 }
   ambulances:
-    "A01": { location: [32.515, -117.04], status: "Available" }
-    "A02": { location: [32.535, -116.96], status: "Available" }
-    "A03": { location: [32.52, -117.12], status: "On Mission" }
-    "A04": { location: [32.525, -117.02], status: "Available" }
-    "A05": { location: [32.515, -117.115], status: "Available" }
-    "A06": { location: [32.538, -116.97], status: "Available" }
-    "A07": { location: [32.50, -117.03], status: "Available" }
-    "A08": { location: [32.531, -117.015], status: "Available" }
-    "A09": { location: [32.51, -116.98], status: "Available" }
+    "A01": { location: [32.515, -117.04], status: "Disponible" }
+    "A02": { location: [32.535, -116.96], status: "Disponible" }
+    "A03": { location: [32.52, -117.12], status: "En Misión" }
+    "A04": { location: [32.525, -117.02], status: "Disponible" }
+    "A05": { location: [32.515, -117.115], status: "Disponible" }
+    "A06": { location: [32.538, -116.97], status: "Disponible" }
+    "A07": { location: [32.50, -117.03], status: "Disponible" }
+    "A08": { location: [32.531, -117.015], status: "Disponible" }
+    "A09": { location: [32.51, -116.98], status: "Disponible" }
   zones:
     "Zona Río": { polygon: [[32.52, -117.01], [32.53, -117.01], [32.53, -117.03], [32.52, -117.03]], crime: 0.7, road_quality: 0.9 }
     "Otay": { polygon: [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]], crime: 0.5, road_quality: 0.7 }
