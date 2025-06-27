@@ -26,29 +26,26 @@ def create_gauge(value: float, label: str, max_val: int = 100) -> str:
     large_arc_flag = 1 if angle > 180 else 0
     return f"""<div style="text-align: center;">
         <svg height="95" width="160">
-            <defs><linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#1f77b4" /><stop offset="70%" stop-color="#ff7f0e" /><stop offset="90%" stop-color="#d62728" /></linearGradient></defs>
+            <defs><linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#1f77b4" /><stop offset="70%" stop-color="#ff7f0e" /><stop offset="90%" stop-color="#d62728" /></linearGradient>
+            <filter id="text-shadow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="1 1" result="shadow"/><feOffset dx="0" dy="0" /></filter></defs>
             <path d="M 10 75 A 65 65 0 0 1 150 75" stroke="#333" stroke-width="20" fill="none" />
             <path d="M 10 75 A 65 65 0 {large_arc_flag} 1 {x_outer} {y_outer}" stroke="url(#grad1)" stroke-width="20" fill="none" />
-            <text x="80" y="70" text-anchor="middle" font-size="28" fill="#eee" font-weight="bold">{int(value)}{'%' if max_val == 100 else ''}</text>
+            <text x="80" y="70" text-anchor="middle" font-size="28" fill="#eee" font-weight="bold" filter="url(#text-shadow)">{int(value)}{'%' if max_val == 100 else ''}</text>
         </svg>
         <div style="font-size: 14px; font-weight: bold; color: #ccc;">{label}</div>
     </div>"""
 
 def create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, route_info=None, style_config=None):
-    # BUG FIX: Refactored layer creation for clarity and correctness, eliminating KeyError.
     zone_layer = pdk.Layer("PolygonLayer", data=zones_gdf, get_polygon="geometry", filled=True, stroked=False, extruded=True, get_elevation="risk * 2000", get_fill_color="fill_color", opacity=0.15, pickable=True)
-    
-    hospital_layer = pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style_config['hospital'], get_color='color', size_scale=15, pickable=True)
+    # BUG FIX: Corrected key access from style_config['hospital'] to style_config['sizes']['hospital']
+    hospital_layer = pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style_config['sizes']['hospital'], get_color='color', size_scale=15, pickable=True)
     ambulance_layer = pdk.Layer("IconLayer", data=ambulance_df, get_icon="icon_data", get_position='[lon, lat]', get_size='size', get_color='color', size_scale=15, pickable=True)
-    incident_layer = pdk.Layer("ScatterplotLayer", data=incident_df, get_position='[lon, lat]', get_radius='size*20', get_fill_color=style_config['incident_halo'], pickable=True, radius_min_pixels=5, stroked=True, get_line_width=100, get_line_color=[*style_config['incident_halo'], 100])
-    
+    incident_layer = pdk.Layer("ScatterplotLayer", data=incident_df, get_position='[lon, lat]', get_radius='size*20', get_fill_color=style_config['colors']['incident_halo'], pickable=True, radius_min_pixels=5, stroked=True, get_line_width=100, get_line_color=[*style_config['colors']['incident_halo'], 100])
     layers = [zone_layer, hospital_layer, ambulance_layer, incident_layer]
-    
     if route_info and "error" not in route_info:
         route_path = LineString([route_info['ambulance_location'], route_info['hospital_location']])
         route_df = pd.DataFrame([{'path': [list(p) for p in route_path.coords]}])
-        layers.append(pdk.Layer('PathLayer', data=route_df, get_path='path', get_width=5, get_color=style_config['route_path'], width_scale=1, width_min_pixels=5))
-        
+        layers.append(pdk.Layer('PathLayer', data=route_df, get_path='path', get_width=5, get_color=style_config['colors']['route_path'], width_scale=1, width_min_pixels=5))
     view_state = pdk.ViewState(latitude=32.525, longitude=-117.02, zoom=11.5, bearing=0, pitch=50)
     tooltip = {"html": "<b>{name}</b><br/>{tooltip_text}", "style": {"backgroundColor": "#333", "color": "white", "border-radius": "5px", "padding": "5px"}}
     return pdk.Deck(layers=layers, initial_view_state=view_state, map_style="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json", tooltip=tooltip)
@@ -118,17 +115,16 @@ def main():
     all_incidents = [inc for zone_data in live_state.values() for inc in zone_data.get('active_incidents', [])]
 
     st.header("Tijuana Emergency Response Command Center")
-    kpi1, kpi2, kpi3 = st.columns(3)
+    kpi_cols = st.columns(3)
     available_units = sum(1 for v in data_fabric.ambulances.values() if v.get('status') == 'Available')
-    kpi1.markdown(create_gauge(available_units, "Units Available", max_val=len(data_fabric.ambulances)), unsafe_allow_html=True)
+    kpi_cols[0].markdown(create_gauge(available_units, "Units Available", max_val=len(data_fabric.ambulances)), unsafe_allow_html=True)
     avg_load = np.mean([_safe_division(h.get('load',0),h.get('capacity',1)) for h in data_fabric.hospitals.values()]) * 100
-    kpi2.markdown(create_gauge(avg_load, "Avg. Hospital Load"), unsafe_allow_html=True)
-    kpi3.markdown(create_gauge(0, "Critical Patients", max_val=5), unsafe_allow_html=True) # Placeholder
+    kpi_cols[1].markdown(create_gauge(avg_load, "Avg. Hospital Load"), unsafe_allow_html=True)
+    kpi_cols[2].markdown(create_gauge(0, "Critical Patients", max_val=5), unsafe_allow_html=True) # Placeholder
     st.divider()
 
     map_col, ticket_col = st.columns((2.5, 1.5))
     with map_col:
-        # Data Preparation for Visualization
         def get_hospital_color(load, capacity): load_pct = _safe_division(load, capacity); return config['styling']['colors']['hospital_ok'] if load_pct < 0.7 else (config['styling']['colors']['hospital_warn'] if load_pct < 0.9 else config['styling']['colors']['hospital_crit'])
         hospital_df = pd.DataFrame([{"name": f"Hospital: {n}", "tooltip_text": f"Load: {d.get('load',0)}/{d.get('capacity',1)} ({_safe_division(d.get('load',0), d.get('capacity',1)):.0%})", "lon": d.get('location', Point(0,0)).x, "lat": d.get('location', Point(0,0)).y, "icon_data": {"url": "https://img.icons8.com/plasticine/100/hospital-3.png", "width": 128, "height": 128, "anchorY": 128}, "color": get_hospital_color(d.get('load',0), d.get('capacity',1))} for n, d in data_fabric.hospitals.items()])
         ambulance_df = pd.DataFrame([{"name": f"Unit: {n}", "tooltip_text": f"Status: {d.get('status', 'Unknown')}", "lon": d.get('location', Point(0,0)).x, "lat": d.get('location', Point(0,0)).y, "icon_data": {"url": "https://img.icons8.com/plasticine/100/ambulance.png", "width": 128, "height": 128, "anchorY": 128}, "size": config['styling']['sizes']['ambulance_available'] if d.get('status') == 'Available' else config['styling']['sizes']['ambulance_mission'], "color": config['styling']['colors']['available'] if d.get('status') == 'Available' else config['styling']['colors']['on_mission']} for n, d in data_fabric.ambulances.items()])
@@ -136,11 +132,9 @@ def main():
         zones_gdf = gpd.GeoDataFrame.from_dict(data_fabric.zones, orient='index').set_geometry('polygon'); zones_gdf['name'] = zones_gdf.index; zones_gdf['risk'] = zones_gdf.index.map(risk_scores).fillna(0); zones_gdf['tooltip_text'] = ""
         max_risk = max(1, zones_gdf['risk'].max()); zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [255, int(255*(1-_safe_division(r,max_risk))), 0, 140]).tolist()
         
-        # Interactive Map Click Logic
         clicked = st.pydeck_chart(create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, st.session_state.get('route_info'), config['styling']), on_select="select", key="deck_map")
         if clicked.selected_features and clicked.selected_features[0].get('layer_name') in ['ScatterplotLayer', 'IconLayer']:
-            # The 'object' key contains the original row of the dataframe
-            selected_obj = clicked.selected_features[0].get('object')
+            selected_obj = clicked.selected_features[0].get('object');
             if selected_obj and 'id' in selected_obj:
                 st.session_state.selected_incident = next((inc for inc in all_incidents if inc.get('id') == selected_obj['id']), None)
                 st.session_state.route_info = engine.find_best_route_for_incident(st.session_state.selected_incident, zones_gdf) if st.session_state.selected_incident else None
