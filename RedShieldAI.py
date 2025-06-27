@@ -1,7 +1,7 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL, VISUALLY-ENHANCED DEPLOYMENT VERSION: Features a high-fidelity road network for realistic
-# routing, a professional "Navigation" map theme, and dynamic, visually compelling map markers
-# to create a true command-level dashboard.
+# FINAL, VISUALLY-ENHANCED DEPLOYMENT VERSION: Features a high-impact Altair chart for
+# demand forecasting and a robust rejection-sampling algorithm to ensure all
+# simulated incidents appear correctly within Tijuana's land borders.
 
 import streamlit as st
 import pandas as pd
@@ -17,15 +17,12 @@ import networkx as nx
 import os
 import json
 import time
+import altair as alt # Import the new library
 
 # --- L0: CONFIGURATION AND CORE UTILITIES ---
 
 def get_app_config() -> Dict:
-    """Returns the application configuration as a native Python dictionary. This is the most robust method."""
-    # ##################################################################
-    # ###############      VISUALIZATION UPGRADE       ###############
-    # ##################################################################
-    # The road network is now much more detailed to produce realistic routes.
+    """Returns the application configuration as a native Python dictionary."""
     config_string = """
 data:
   hospitals:
@@ -48,37 +45,23 @@ data:
     "Otay": { polygon: [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]], crime: 0.5, road_quality: 0.7 }
     "Playas": { polygon: [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]], crime: 0.4, road_quality: 0.8 }
   city_boundary:
-    - [32.535, -117.129]; - [32.510, -117.125]; - [32.448, -117.060]; - [32.435, -116.930]; - [32.537, -116.930]; - [32.537, -117.030]; - [32.542, -117.038]; - [32.543, -117.128]
+    - [32.535, -117.129] # Playas NW
+    - [32.510, -117.125] # Playas SW
+    - [32.448, -117.060] # South of Rosarito corridor
+    - [32.435, -116.930] # SE Corner
+    - [32.537, -116.930] # NE Corner near border
+    - [32.537, -117.030] # Border west
+    - [32.542, -117.038] # San Ysidro POE
+    - [32.543, -117.128] # Border west of ocean
   patient_vitals:
     "P001": { heart_rate: 145, oxygen: 88, ambulance: "A03" }
     "P002": { heart_rate: 90, oxygen: 97, ambulance: "A01" }
     "P003": { heart_rate: 150, oxygen: 99, ambulance: "A02" }
   road_network:
     nodes:
-      "N_Playas": { pos: [32.52, -117.12] }
-      "N_Centro": { pos: [32.53, -117.04] }
-      "N_ZonaRio": { pos: [32.528, -117.025] }
-      "N_5y10": { pos: [32.50, -117.03] }
-      "N_LaMesa": { pos: [32.51, -117.00] }
-      "N_Otay": { pos: [32.535, -116.965] }
-      "N_ElFlorido": { pos: [32.48, -116.95] }
-      "N_SantaFe": { pos: [32.46, -117.02] }
-      "H_General": { pos: [32.5295, -117.0182] }
-      "H_IMSS1": { pos: [32.5121, -117.0145] }
-      "H_Angeles": { pos: [32.5300, -117.0200] }
-      "H_CruzRoja": { pos: [32.5283, -117.0255] }
+      "N_Playas": { pos: [32.52, -117.12] }; "N_Centro": { pos: [32.53, -117.04] }; "N_ZonaRio": { pos: [32.528, -117.025] }; "N_5y10": { pos: [32.50, -117.03] }; "N_LaMesa": { pos: [32.51, -117.00] }; "N_Otay": { pos: [32.535, -116.965] }; "N_ElFlorido": { pos: [32.48, -116.95] }; "N_SantaFe": { pos: [32.46, -117.02] }; "H_General": { pos: [32.5295, -117.0182] }; "H_IMSS1": { pos: [32.5121, -117.0145] }; "H_Angeles": { pos: [32.5300, -117.0200] }; "H_CruzRoja": { pos: [32.5283, -117.0255] }
     edges:
-      - ["N_Playas", "N_Centro", 5.0]
-      - ["N_Centro", "N_ZonaRio", 2.0]
-      - ["N_ZonaRio", "N_5y10", 3.0]
-      - ["N_ZonaRio", "H_Angeles", 0.5]
-      - ["N_ZonaRio", "H_CruzRoja", 0.2]
-      - ["N_ZonaRio", "H_General", 1.0]
-      - ["N_5y10", "N_LaMesa", 2.5]
-      - ["N_5y10", "N_SantaFe", 4.0]
-      - ["N_LaMesa", "H_IMSS1", 1.0]
-      - ["N_LaMesa", "N_ElFlorido", 5.0]
-      - ["N_ZonaRio", "N_Otay", 6.0]
+      - ["N_Playas", "N_Centro", 5.0]; - ["N_Centro", "N_ZonaRio", 2.0]; - ["N_ZonaRio", "N_5y10", 3.0]; - ["N_ZonaRio", "H_Angeles", 0.5]; - ["N_ZonaRio", "H_CruzRoja", 0.2]; - ["N_ZonaRio", "H_General", 1.0]; - ["N_5y10", "N_LaMesa", 2.5]; - ["N_5y10", "N_SantaFe", 4.0]; - ["N_LaMesa", "H_IMSS1", 1.0]; - ["N_LaMesa", "N_ElFlorido", 5.0]; - ["N_ZonaRio", "N_Otay", 6.0]
   model_params: { n_estimators: 50, max_depth: 5, learning_rate: 0.05, subsample: 0.8, colsample_bytree: 0.8 }
 styling:
   colors: { available: [0, 179, 89, 255], on_mission: [150, 150, 150, 180], hospital_ok: [0, 179, 89], hospital_warn: [255, 191, 0], hospital_crit: [220, 53, 69], incident_halo: [220, 53, 69, 150], route_path: [0, 123, 255] }
@@ -118,16 +101,14 @@ class DataFusionFabric:
 
 class CognitiveEngine:
     def __init__(self, data_fabric: DataFusionFabric, model_config: Dict):
-        self.data_fabric = data_fabric
-        self.demand_model, self.model_features = self._train_demand_model(model_config)
+        self.data_fabric = data_fabric; self.demand_model, self.model_features = self._train_demand_model(model_config)
     def _train_demand_model(self, model_config: Dict):
         print("--- Entrenando modelo de demanda (ejecutado una sola vez gracias a @st.cache_resource) ---")
-        model_params = model_config.get('data', {}).get('model_params', {})
-        hours = 24 * 7; timestamps = pd.to_datetime(pd.date_range(start='2023-01-01', periods=hours, freq='h'))
+        model_params = model_config.get('data', {}).get('model_params', {}); hours = 24 * 7
+        timestamps = pd.to_datetime(pd.date_range(start='2023-01-01', periods=hours, freq='h'))
         X_train = pd.DataFrame({'hour': timestamps.hour, 'day_of_week': timestamps.dayofweek, 'is_quincena': timestamps.day.isin([14,15,16,29,30,31,1]), 'temperature': np.random.normal(22, 5, hours), 'border_wait': np.random.randint(20, 120, hours)})
         y_train = np.maximum(0, 5 + 3 * np.sin(X_train['hour'] * 2 * np.pi / 24) + X_train['is_quincena'] * 5 + X_train['border_wait']/20 + np.random.randn(hours)).astype(int)
-        model = xgb.XGBRegressor(objective='reg:squarederror', **model_params, random_state=42, n_jobs=-1)
-        model.fit(X_train, y_train)
+        model = xgb.XGBRegressor(objective='reg:squarederror', **model_params, random_state=42, n_jobs=-1); model.fit(X_train, y_train)
         return model, list(X_train.columns)
     def predict_citywide_demand(self, features: Dict) -> float:
         input_df = pd.DataFrame([features], columns=self.model_features); return max(0, self.demand_model.predict(input_df)[0])
@@ -139,7 +120,7 @@ class CognitiveEngine:
             risk_scores[zone] = risk * (1 + len(incidents_in_zone))
         return risk_scores
     def get_patient_alerts(self) -> List[Dict]:
-        alerts = []
+        alerts = [];
         for pid, vitals in self.data_fabric.patient_vitals.items():
             if vitals.get('heart_rate', 100) > 140 or vitals.get('oxygen', 100) < 90: alerts.append({"Patient ID": pid, "Heart Rate": vitals.get('heart_rate'), "Oxygen %": vitals.get('oxygen'), "Ambulance": vitals.get('ambulance', 'N/A')})
         return alerts
@@ -180,20 +161,12 @@ def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_co
     max_risk = max(1, zones_gdf['risk'].max()); zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [220, 53, 69, int(200 * _safe_division(r,max_risk))]).tolist()
     return zones_gdf, hospital_df, ambulance_df, incident_df, heatmap_df
 def create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, heatmap_df, route_info=None, style_config=None):
-    # ##################################################################
-    # ###############      VISUALIZATION UPGRADE       ###############
-    # ##################################################################
-    zone_layer = pdk.Layer("PolygonLayer", data=zones_gdf, get_polygon="geometry", filled=True, stroked=False, extruded=True, get_elevation="risk * 3000", get_fill_color="fill_color", opacity=0.1, pickable=True); hospital_layer = pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style_config['sizes']['hospital'], get_color='color', size_scale=15, pickable=True); ambulance_layer = pdk.Layer("IconLayer", data=ambulance_df, get_icon="icon_data", get_position='[lon, lat]', get_size='size', get_color='color', size_scale=15, pickable=True); 
-    # Pulsing effect for incidents
-    incident_layer = pdk.Layer("ScatterplotLayer", data=incident_df, get_position='[lon, lat]', get_radius='size*25', get_fill_color=style_config['colors']['incident_halo'], pickable=True, radius_min_pixels=8, stroked=True, get_line_width=120, get_line_color=[*style_config['colors']['incident_halo'][:3], 100])
-    heatmap_layer = pdk.Layer("HeatmapLayer", data=heatmap_df, get_position='[lon, lat]', opacity=0.3, aggregation='"MEAN"', threshold=0.1, get_weight=1); layers = [heatmap_layer, zone_layer, hospital_layer, ambulance_layer, incident_layer]
+    zone_layer = pdk.Layer("PolygonLayer", data=zones_gdf, get_polygon="geometry", filled=True, stroked=False, extruded=True, get_elevation="risk * 3000", get_fill_color="fill_color", opacity=0.1, pickable=True); hospital_layer = pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style_config['sizes']['hospital'], get_color='color', size_scale=15, pickable=True); ambulance_layer = pdk.Layer("IconLayer", data=ambulance_df, get_icon="icon_data", get_position='[lon, lat]', get_size='size', get_color='color', size_scale=15, pickable=True); incident_layer = pdk.Layer("ScatterplotLayer", data=incident_df, get_position='[lon, lat]', get_radius='size*25', get_fill_color=style_config['colors']['incident_halo'], pickable=True, radius_min_pixels=8, stroked=True, get_line_width=120, get_line_color=[*style_config['colors']['incident_halo'][:3], 100]); heatmap_layer = pdk.Layer("HeatmapLayer", data=heatmap_df, get_position='[lon, lat]', opacity=0.3, aggregation='"MEAN"', threshold=0.1, get_weight=1); layers = [heatmap_layer, zone_layer, hospital_layer, ambulance_layer, incident_layer]
     if route_info and "error" not in route_info and "route_path_coords" in route_info:
         layers.append(pdk.Layer('PathLayer', data=pd.DataFrame([{'path': route_info['route_path_coords']}]), get_path='path', get_width=8, get_color=style_config['colors']['route_path'], width_scale=1, width_min_pixels=6))
-    view_state = pdk.ViewState(latitude=32.525, longitude=-117.02, zoom=11.5, bearing=0, pitch=50); tooltip = {"html": "<b>{name}</b><br/>{tooltip_text}", "style": {"backgroundColor": "#333", "color": "white", "border": "1px solid #555", "border-radius": "5px", "padding": "5px"}}; 
-    return pdk.Deck(layers=layers, initial_view_state=view_state, map_style="mapbox://styles/mapbox/navigation-night-v1", tooltip=tooltip)
+    view_state = pdk.ViewState(latitude=32.525, longitude=-117.02, zoom=11.5, bearing=0, pitch=50); tooltip = {"html": "<b>{name}</b><br/>{tooltip_text}", "style": {"backgroundColor": "#333", "color": "white", "border": "1px solid #555", "border-radius": "5px", "padding": "5px"}}; return pdk.Deck(layers=layers, initial_view_state=view_state, map_style="mapbox://styles/mapbox/navigation-night-v1", tooltip=tooltip)
 def display_ai_rationale(route_info: Dict):
-    st.markdown("---")
-    st.markdown("> La IA balancea tiempo de viaje, seguridad de la ruta y capacidad hospitalaria para encontrar el destino óptimo.")
+    st.markdown("---"); st.markdown("> La IA balancea tiempo de viaje, seguridad de la ruta y capacidad hospitalaria para encontrar el destino óptimo.")
     st.subheader("Lógica del Despacho de IA"); best = route_info['routing_analysis'].iloc[0]; st.success(f"**Recomendado:** Despachar unidad `{route_info['ambulance_unit']}` a `{route_info['best_hospital']}`", icon="✅"); st.markdown(f"**Razón:** Balance óptimo del menor tiempo de viaje y la disponibilidad del hospital. El algoritmo A* calculó un ETA ajustado por riesgo de **{best.get('eta_min', 0):.1f} min**.")
     if len(route_info['routing_analysis']) > 1:
         rejected = route_info['routing_analysis'].iloc[1]; reasons = []
@@ -204,10 +177,7 @@ def display_ai_rationale(route_info: Dict):
 
 @st.cache_resource
 def get_engine():
-    app_config = get_app_config()
-    data_fabric = DataFusionFabric(app_config)
-    engine = CognitiveEngine(data_fabric, app_config)
-    return engine
+    app_config = get_app_config(); data_fabric = DataFusionFabric(app_config); engine = CognitiveEngine(data_fabric, app_config); return engine
 
 def main():
     st.set_page_config(page_title="RedShield AI: Comando Élite", layout="wide", initial_sidebar_state="expanded")
@@ -278,7 +248,28 @@ def main():
                 future_hours = pd.date_range(start=datetime.now(), periods=24, freq='h'); forecast_data = []
                 for ts in future_hours:
                     features = {"hour": ts.hour, "day_of_week": ts.weekday(), "is_quincena": ts.day in [14,15,16,29,30,31,1], 'temperature': 22, 'border_wait': 75}; mean_pred = engine.predict_citywide_demand(features); std_dev = mean_pred * 0.10; forecast_data.append({'time': ts, 'Llamadas Predichas': mean_pred, 'Límite Superior': mean_pred + 1.96 * std_dev, 'Límite Inferior': np.maximum(0, mean_pred - 1.96 * std_dev)})
-                st.area_chart(pd.DataFrame(forecast_data).set_index('time'))
+                
+                # ##################################################################
+                # ###############      VISUALIZATION UPGRADE       ###############
+                # ##################################################################
+                df_forecast = pd.DataFrame(forecast_data).set_index('time')
+                
+                # Create the Altair chart
+                base = alt.Chart(df_forecast.reset_index()).encode(x='time:T')
+                band = base.mark_area(opacity=0.3).encode(
+                    y='Límite Inferior',
+                    y2='Límite Superior'
+                ).properties(title="Pronóstico de Demanda de Llamadas (24h)")
+                
+                line = base.mark_line(color='blue').encode(y='Llamadas Predichas')
+                points = base.mark_point(color='blue', filled=True, size=60).encode(
+                    y='Llamadas Predichas',
+                    tooltip=[alt.Tooltip('time:T', title='Hora'), alt.Tooltip('Llamadas Predichas', title='Predicción', format='.1f')]
+                )
+                
+                st.altair_chart((band + line + points).interactive(), use_container_width=True)
+                # ##################################################################
+
         with feature_col:
             st.subheader("Importancia de Factores del Modelo (XAI)")
             info_box("""**Qué muestra:** Los factores que tienen el mayor impacto en nuestro pronóstico de demanda de llamadas *en este momento*. Una barra más alta significa que ese factor tiene un mayor impacto.<br><br>**Cómo usarlo:** Esto explica el 'porqué' detrás de la predicción de la IA. Si `border_wait` (espera en la frontera) es alto, le dice que el tráfico fronterizo es un impulsor principal del volumen de llamadas hoy.""")
