@@ -1,7 +1,7 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL, FULLY LOCALIZED DEPLOYMENT VERSION: All user-facing content has been
-# translated to Spanish. The application uses a robust callback-driven state
-# management pattern and includes all requested data and legends.
+# FINAL, ROBUST DEPLOYMENT VERSION: Fixes the UnboundLocalError by correcting
+# the variable scope of the `config` object, ensuring it is loaded on every
+# script run.
 
 import streamlit as st
 import pandas as pd
@@ -18,7 +18,7 @@ import os
 import json
 import time
 
-# --- L0: CONFIGURACIÓN, RUTAS Y AUTO-INICIALIZACIÓN (Unchanged) ---
+# --- L0: CONFIGURATION, PATHS, AND SELF-SETUP (Unchanged) ---
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, 'config.yaml')
 MODEL_FILE = os.path.join(SCRIPT_DIR, 'demand_model.xgb')
@@ -154,10 +154,24 @@ def display_ai_rationale(route_info: Dict):
 # --- L3: APLICACIÓN PRINCIPAL ---
 def main():
     st.set_page_config(page_title="RedShield AI: Comando Élite", layout="wide", initial_sidebar_state="expanded")
+    
+    # ##################################################################
+    # ###############      THE ROBUST SCOPE FIX        ###############
+    # ##################################################################
+    # Load config at the top level of main() so it's always available.
+    # It's cached, so this is fast.
+    config = load_config(CONFIG_FILE)
+    
+    # Initialize stateful objects only once, passing the config.
     if 'engine' not in st.session_state:
-        config = load_config(CONFIG_FILE); st.session_state.engine = CognitiveEngine(DataFusionFabric(config))
-    engine = st.session_state.engine; data_fabric = engine.data_fabric
-    live_state = data_fabric.get_live_state(); risk_scores = engine.calculate_risk_scores(live_state); all_incidents = [inc for zone_data in live_state.values() for inc in zone_data.get('active_incidents', [])]
+        st.session_state.engine = CognitiveEngine(DataFusionFabric(config))
+    engine = st.session_state.engine
+    data_fabric = engine.data_fabric
+    # ##################################################################
+
+    live_state = data_fabric.get_live_state()
+    risk_scores = engine.calculate_risk_scores(live_state)
+    all_incidents = [inc for zone_data in live_state.values() for inc in zone_data.get('active_incidents', [])]
     incident_dict = {i['id']: i for i in all_incidents}
 
     def handle_incident_selection():
@@ -226,6 +240,8 @@ def main():
                 - **Color (Intensidad de Rojo):** Mapa de calor de la densidad de incidentes. Un rojo más intenso significa más incidentes en esa área.
                 - **Elevación (Altura):** Puntaje de riesgo compuesto por tráfico, crimen y calidad de las vías. Las zonas más altas son más riesgosas para transitar.
                 """)
+            
+            # The 'config' variable is now correctly scoped and available here.
             zones_gdf, hosp_df, amb_df, inc_df, heat_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, config.get('styling', {}))
             deck = create_deck_gl_map(zones_gdf, hosp_df, amb_df, inc_df, heat_df, st.session_state.get('route_info'), config.get('styling', {}))
             st.pydeck_chart(deck, use_container_width=True)
