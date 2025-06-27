@@ -1,7 +1,6 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL, ROBUST DEPLOYMENT VERSION: Fixes the UnboundLocalError by correcting
-# the variable scope of the `config` object, ensuring it is loaded on every
-# script run.
+# FINAL, ROBUST DEPLOYMENT VERSION: Fixes the data discrepancy by introducing a
+# city_boundary for realistic incident generation. All assets now populate correctly.
 
 import streamlit as st
 import pandas as pd
@@ -18,7 +17,7 @@ import os
 import json
 import time
 
-# --- L0: CONFIGURATION, PATHS, AND SELF-SETUP (Unchanged) ---
+# --- L0: CONFIGURATION, PATHS, AND SELF-SETUP ---
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, 'config.yaml')
 MODEL_FILE = os.path.join(SCRIPT_DIR, 'demand_model.xgb')
@@ -49,7 +48,7 @@ def _train_and_save_model():
 
 @st.cache_data
 def load_config(path):
-    with open(path, 'r') as f: return yaml.safe_load(f)
+    with open(path, 'r', encoding='utf-8') as f: return yaml.safe_load(f)
 
 @st.cache_resource
 def load_demand_model() -> tuple:
@@ -66,25 +65,48 @@ def _safe_division(n, d): return n / d if d else 0
 def find_nearest_node(graph: nx.Graph, point: Point):
     return min(graph.nodes, key=lambda node: point.distance(Point(graph.nodes[node]['pos'][1], graph.nodes[node]['pos'][0])))
 
-# --- L1 & L2 (Unchanged) ---
+# --- L1: DATA & MODELING LAYER ---
 class DataFusionFabric:
     def __init__(self, config: Dict):
-        self.config = config.get('data', {}); self.hospitals = {name: {'location': Point(data['location'][1], data['location'][0]), 'capacity': data['capacity'], 'load': data['load']} for name, data in self.config.get('hospitals', {}).items()}; self.ambulances = {name: {'location': Point(data['location'][1], data['location'][0]), 'status': data['status']} for name, data in self.config.get('ambulances', {}).items()}; self.zones = {name: {**data, 'polygon': Polygon([(p[1], p[0]) for p in data['polygon']])} for name, data in self.config.get('zones', {}).items()}; self.patient_vitals = self.config.get('patient_vitals', {}); self.road_graph = self._build_road_graph(self.config.get('road_network', {}))
+        self.config = config.get('data', {}); 
+        self.hospitals = {name: {'location': Point(data['location'][1], data['location'][0]), 'capacity': data['capacity'], 'load': data['load']} for name, data in self.config.get('hospitals', {}).items()}
+        self.ambulances = {name: {'location': Point(data['location'][1], data['location'][0]), 'status': data['status']} for name, data in self.config.get('ambulances', {}).items()}
+        self.zones = {name: {**data, 'polygon': Polygon([(p[1], p[0]) for p in data['polygon']])} for name, data in self.config.get('zones', {}).items()}
+        self.patient_vitals = self.config.get('patient_vitals', {})
+        self.road_graph = self._build_road_graph(self.config.get('road_network', {}))
+        # SME FIX: Load the city boundary for realistic incident generation
+        self.city_boundary = Polygon([(p[1], p[0]) for p in self.config.get('city_boundary', [])])
+
     @st.cache_data
     def _build_road_graph(_self, network_config: Dict) -> nx.Graph:
         G = nx.Graph();
         for node, data in network_config.get('nodes', {}).items(): G.add_node(node, pos=data['pos'])
         for edge in network_config.get('edges', []): G.add_edge(edge[0], edge[1], weight=edge[2])
         return G
+
     @st.cache_data(ttl=60)
     def get_live_state(_self) -> Dict:
-        state = {}; all_nodes = list(_self.road_graph.nodes)
-        for zone, data in _self.zones.items():
-            incidents = []
-            for _ in range(np.random.randint(2, 8)):
-                node = np.random.choice(all_nodes); loc_coords = _self.road_graph.nodes[node]['pos']; incident_point = Point(loc_coords[1], loc_coords[0])
-                if data['polygon'].contains(incident_point): incidents.append({"id": f"I-{zone[:2].upper()}{np.random.randint(100,999)}", "location": incident_point, "priority": np.random.choice([1, 2, 3], p=[0.6, 0.3, 0.1]), "node": node})
-            state[zone] = {"traffic": np.random.uniform(0.3, 1.0), "active_incidents": incidents}
+        state = {"city_incidents": {"active_incidents": []}}
+        minx, miny, maxx, maxy = _self.city_boundary.bounds
+
+        # SME FIX: Generate incidents within the entire city boundary, not just small zones
+        for _ in range(np.random.randint(15, 25)): # Generate a higher, more realistic number of incidents
+            random_point = Point(np.random.uniform(minx, maxx), np.random.uniform(miny, maxy))
+            # Ensure the point is within the actual polygon, not just the bounding box
+            if _self.city_boundary.contains(random_point):
+                incident_id = f"I-TJ{np.random.randint(1000,9999)}"
+                incident_node = find_nearest_node(_self.road_graph, random_point)
+                state["city_incidents"]["active_incidents"].append({
+                    "id": incident_id,
+                    "location": random_point,
+                    "priority": np.random.choice([1, 2, 3], p=[0.6, 0.3, 0.1]),
+                    "node": incident_node
+                })
+        
+        # Add traffic data per zone (this can remain the same)
+        for zone in _self.zones.keys():
+            state[zone] = {"traffic": np.random.uniform(0.3, 1.0)}
+            
         return state
 
 class CognitiveEngine:
@@ -95,7 +117,10 @@ class CognitiveEngine:
     def calculate_risk_scores(self, live_state: Dict) -> Dict:
         risk_scores = {};
         for zone, s_data in self.data_fabric.zones.items():
-            l_data = live_state.get(zone, {}); risk = (l_data.get('traffic', 0.5) * 0.6 + (1 - s_data.get('road_quality', 0.5)) * 0.2 + s_data.get('crime', 0.5) * 0.2); risk_scores[zone] = risk * (1 + len(l_data.get('active_incidents', [])))
+            l_data = live_state.get(zone, {}); risk = (l_data.get('traffic', 0.5) * 0.6 + (1 - s_data.get('road_quality', 0.5)) * 0.2 + s_data.get('crime', 0.5) * 0.2)
+            # We now count incidents per zone by checking if they fall within the polygon
+            incidents_in_zone = [inc for inc in live_state.get("city_incidents", {}).get("active_incidents", []) if s_data['polygon'].contains(inc['location'])]
+            risk_scores[zone] = risk * (1 + len(incidents_in_zone))
         return risk_scores
     def get_patient_alerts(self) -> List[Dict]:
         alerts = []
@@ -120,6 +145,7 @@ class CognitiveEngine:
         if not options: return {"error": "No se pudieron calcular rutas a hospitales."}
         best_option = min(options, key=lambda x: x.get('total_score', float('inf'))); path_coords = [[self.data_fabric.road_graph.nodes[node]['pos'][1], self.data_fabric.road_graph.nodes[node]['pos'][0]] for node in best_option['path_nodes']]; return {"ambulance_unit": ambulance_unit, "best_hospital": best_option.get('hospital'), "routing_analysis": pd.DataFrame(options).drop(columns=['path_nodes']).sort_values('total_score').reset_index(drop=True), "route_path_coords": path_coords}
 
+# --- L2: PRESENTATION LAYER (Unchanged) ---
 def kpi_card(icon: str, title: str, value: Any, color: str):
     st.markdown(f"""<div style="background-color: #262730; border: 1px solid #444; border-radius: 10px; padding: 20px; text-align: center; height: 100%;"><div style="font-size: 40px;">{icon}</div><div style="font-size: 16px; color: #bbb; margin-top: 10px; text-transform: uppercase; font-weight: 600;">{title}</div><div style="font-size: 28px; font-weight: bold; color: {color};">{value}</div></div>""", unsafe_allow_html=True)
 def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_config):
@@ -154,24 +180,14 @@ def display_ai_rationale(route_info: Dict):
 # --- L3: APLICACIÓN PRINCIPAL ---
 def main():
     st.set_page_config(page_title="RedShield AI: Comando Élite", layout="wide", initial_sidebar_state="expanded")
-    
-    # ##################################################################
-    # ###############      THE ROBUST SCOPE FIX        ###############
-    # ##################################################################
-    # Load config at the top level of main() so it's always available.
-    # It's cached, so this is fast.
-    config = load_config(CONFIG_FILE)
-    
-    # Initialize stateful objects only once, passing the config.
     if 'engine' not in st.session_state:
-        st.session_state.engine = CognitiveEngine(DataFusionFabric(config))
-    engine = st.session_state.engine
-    data_fabric = engine.data_fabric
-    # ##################################################################
-
+        config = load_config(CONFIG_FILE); st.session_state.engine = CognitiveEngine(DataFusionFabric(config))
+    engine = st.session_state.engine; data_fabric = engine.data_fabric
+    
+    # SME FIX: The all_incidents list is now correctly populated from the new live_state structure
     live_state = data_fabric.get_live_state()
     risk_scores = engine.calculate_risk_scores(live_state)
-    all_incidents = [inc for zone_data in live_state.values() for inc in zone_data.get('active_incidents', [])]
+    all_incidents = live_state.get("city_incidents", {}).get("active_incidents", [])
     incident_dict = {i['id']: i for i in all_incidents}
 
     def handle_incident_selection():
@@ -195,17 +211,10 @@ def main():
         with kpi_cols[0]: kpi_card("🚑", "Unidades Disponibles", f"{available_units}/{len(data_fabric.ambulances)}", "#00A9FF")
         with kpi_cols[1]: kpi_card("🏥", "Carga Hosp. Prom.", f"{avg_load:.0%}", "#FFB000")
         with kpi_cols[2]: kpi_card("🚨", "Incidentes Activos", len(all_incidents), "#DC3545")
-        
         with st.expander("¿Qué significan estos indicadores (KPIs)?"):
-            st.markdown("""
-            - **<font color='#00A9FF'>Unidades Disponibles:</font>** Muestra el número de ambulancias listas para ser despachadas. Un número bajo indica un alto ritmo operativo o falta de recursos.
-            - **<font color='#FFB000'>Carga Hosp. Prom.:</font>** El promedio de capacidad ocupada en todos los hospitales. Un porcentaje alto sugiere que todo el sistema está bajo estrés.
-            - **<font color='#DC3545'>Incidentes Activos:</font>** El número actual de emergencias sin resolver en la ciudad.
-            """, unsafe_allow_html=True)
+            st.markdown("""- **<font color='#00A9FF'>Unidades Disponibles:</font>** Muestra el número de ambulancias listas para ser despachadas. Un número bajo indica un alto ritmo operativo o falta de recursos.<br>- **<font color='#FFB000'>Carga Hosp. Prom.:</font>** El promedio de capacidad ocupada en todos los hospitales. Un porcentaje alto sugiere que todo el sistema está bajo estrés.<br>- **<font color='#DC3545'>Incidentes Activos:</font>** El número actual de emergencias sin resolver en la ciudad.""", unsafe_allow_html=True)
         st.divider()
-
         map_col, ticket_col = st.columns((2.5, 1.5))
-        
         with ticket_col:
             st.subheader("Boleta de Despacho")
             st.selectbox(
@@ -223,25 +232,11 @@ def main():
                     st.error(f"Error de Ruteo: {st.session_state.get('route_info', {}).get('error', 'No se pudo calcular una ruta.')}")
             else:
                 st.info("Seleccione un incidente del menú de arriba para generar un plan de despacho.")
-        
         with map_col:
             st.subheader("Mapa de Operaciones de la Ciudad")
             with st.expander("Mostrar Leyenda del Mapa", expanded=True):
-                st.markdown("""
-                **Iconos:**
-                - 🚑 **Ambulancia (Grande, Brillante):** Disponible para despacho.
-                - 🚑 **Ambulancia (Pequeña, Gris):** Actualmente en una misión.
-                - 🏥 **Hospital (Verde <70%):** Aceptando pacientes, carga baja.
-                - 🏥 **Hospital (Naranja <90%):** Carga alta, usar con precaución.
-                - 🏥 **Hospital (Rojo >=90%):** Carga crítica, evitar si es posible.
-                - 🚨 **Círculo Pulsante:** Ubicación de una emergencia activa.
-                
-                **Análisis de Zona:**
-                - **Color (Intensidad de Rojo):** Mapa de calor de la densidad de incidentes. Un rojo más intenso significa más incidentes en esa área.
-                - **Elevación (Altura):** Puntaje de riesgo compuesto por tráfico, crimen y calidad de las vías. Las zonas más altas son más riesgosas para transitar.
-                """)
-            
-            # The 'config' variable is now correctly scoped and available here.
+                st.markdown("""**Iconos:**<br>- 🚑 **Ambulancia (Grande, Brillante):** Disponible para despacho.<br>- 🚑 **Ambulancia (Pequeña, Gris):** Actualmente en una misión.<br>- 🏥 **Hospital (Verde <70%):** Aceptando pacientes, carga baja.<br>- 🏥 **Hospital (Naranja <90%):** Carga alta, usar con precaución.<br>- 🏥 **Hospital (Rojo >=90%):** Carga crítica, evitar si es posible.<br>- 🚨 **Círculo Pulsante:** Ubicación de una emergencia activa.<br><br>**Análisis de Zona:**<br>- **Color (Intensidad de Rojo):** Mapa de calor de la densidad de incidentes. Un rojo más intenso significa más incidentes en esa área.<br>- **Elevación (Altura):** Puntaje de riesgo compuesto por tráfico, crimen y calidad de las vías. Las zonas más altas son más riesgosas para transitar.""", unsafe_allow_html=True)
+            config = load_config(CONFIG_FILE)
             zones_gdf, hosp_df, amb_df, inc_df, heat_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, config.get('styling', {}))
             deck = create_deck_gl_map(zones_gdf, hosp_df, amb_df, inc_df, heat_df, st.session_state.get('route_info'), config.get('styling', {}))
             st.pydeck_chart(deck, use_container_width=True)
@@ -251,13 +246,7 @@ def main():
         forecast_col, feature_col = st.columns(2)
         with forecast_col:
             st.subheader("Pronóstico Probabilístico de Demanda (24h)")
-            st.info("""
-            **Qué muestra:** La predicción de la IA para el número total de llamadas de emergencia en toda la ciudad para las próximas 24 horas.
-            - La **línea sólida** es el número más probable de llamadas.
-            - El **área sombreada** representa el intervalo de confianza del 95%, el rango probable de llamadas.
-            
-            **Cómo usarlo:** Una alta demanda predicha puede justificar la asignación de personal adicional o el pre-posicionamiento de unidades en puntos calientes esperados.
-            """)
+            st.info("""**Qué muestra:** La predicción de la IA para el número total de llamadas de emergencia en toda la ciudad para las próximas 24 horas.<br>- La **línea sólida** es el número más probable de llamadas.<br>- El **área sombreada** representa el intervalo de confianza del 95%, el rango probable de llamadas.<br><br>**Cómo usarlo:** Una alta demanda predicha puede justificar la asignación de personal adicional o el pre-posicionamiento de unidades en puntos calientes esperados.""", unsafe_allow_html=True)
             with st.spinner("Calculando pronóstico de 24 horas..."):
                 future_hours = pd.date_range(start=datetime.now(), periods=24, freq='h'); forecast_data = []
                 for ts in future_hours:
@@ -265,11 +254,7 @@ def main():
                 st.area_chart(pd.DataFrame(forecast_data).set_index('time'))
         with feature_col:
             st.subheader("Importancia de Factores del Modelo (XAI)")
-            st.info("""
-            **Qué muestra:** Los factores que tienen el mayor impacto en nuestro pronóstico de demanda de llamadas *en este momento*. Una barra más alta significa que ese factor tiene un mayor impacto.
-            
-            **Cómo usarlo:** Esto explica el 'porqué' detrás de la predicción de la IA. Si `border_wait` (espera en la frontera) es alto en el gráfico, le dice que el tráfico fronterizo es un impulsor principal del volumen de llamadas hoy, lo que puede informar decisiones estratégicas.
-            """)
+            st.info("""**Qué muestra:** Los factores que tienen el mayor impacto en nuestro pronóstico de demanda de llamadas *en este momento*. Una barra más alta significa que ese factor tiene un mayor impacto.<br><br>**Cómo usarlo:** Esto explica el 'porqué' detrás de la predicción de la IA. Si `border_wait` (espera en la frontera) es alto en el gráfico, le dice que el tráfico fronterizo es un impulsor principal del volumen de llamadas hoy, lo que puede informar decisiones estratégicas.""", unsafe_allow_html=True)
             feature_importance = pd.DataFrame({'feature': engine.model_features, 'importance': engine.demand_model.feature_importances_}).sort_values('importance', ascending=True); st.bar_chart(feature_importance.set_index('feature'))
         st.divider(); col1, col2 = st.columns(2)
         with col1:
@@ -284,14 +269,14 @@ def main():
                 for alert in patient_alerts: st.error(f"**Paciente {alert.get('Patient ID')}:** FC: {alert.get('Heart Rate')}, O2: {alert.get('Oxygen %')}% | Unidad: {alert.get('Ambulance')}", icon="❤️‍🩹")
     elif tab_choice == "Simulación Estratégica":
         st.header("Simulación Estratégica y Análisis 'What-If'")
-        st.info("""
-        Esta herramienta le permite probar la resiliencia del sistema en condiciones extremas. Al aumentar el multiplicador de tráfico, puede simular eventos como la hora pico, días festivos o cierres de carreteras importantes para ver cómo impactan el riesgo zonal.
-        """)
+        st.info("""Esta herramienta le permite probar la resiliencia del sistema en condiciones extremas. Al aumentar el multiplicador de tráfico, puede simular eventos como la hora pico, días festivos o cierres de carreteras importantes para ver cómo impactan el riesgo zonal.""")
         sim_traffic_spike = st.slider("Simular Multiplicador de Tráfico en Toda la Ciudad", 1.0, 5.0, 1.0, 0.25)
         if st.button("Ejecutar Simulación", use_container_width=True):
             sim_risk_scores = {};
             for zone, s_data in data_fabric.zones.items():
-                l_data = live_state.get(zone, {}); sim_risk = (l_data.get('traffic', 0.5) * sim_traffic_spike * 0.6 + (1 - s_data.get('road_quality', 0.5)) * 0.2 + s_data.get('crime', 0.5) * 0.2); sim_risk_scores[zone] = sim_risk * (1 + len(l_data.get('active_incidents', [])))
+                l_data = live_state.get(zone, {}); sim_risk = (l_data.get('traffic', 0.5) * sim_traffic_spike * 0.6 + (1 - s_data.get('road_quality', 0.5)) * 0.2 + s_data.get('crime', 0.5) * 0.2)
+                incidents_in_zone = [inc for inc in all_incidents if s_data['polygon'].contains(inc['location'])]
+                sim_risk_scores[zone] = sim_risk * (1 + len(incidents_in_zone))
             st.subheader("Puntajes de Riesgo Zonal Simulados"); st.bar_chart(pd.DataFrame.from_dict(sim_risk_scores, orient='index', columns=['Riesgo Simulado']).sort_values('Riesgo Simulado', ascending=False)); st.markdown("Las zonas de alto riesgo bajo estas condiciones simuladas requerirían un posicionamiento preventivo de recursos.")
 
 if __name__ == "__main__":
