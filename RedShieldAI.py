@@ -1,7 +1,7 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL, FULLY DOCUMENTED DEPLOYMENT VERSION: Includes comprehensive legends,
-# action-oriented explanations, and contextual help for all KPIs, maps, and charts,
-# ensuring full interpretability for command staff.
+# FINAL, FULLY LOCALIZED DEPLOYMENT VERSION: All user-facing content has been
+# translated to Spanish. The application uses a robust callback-driven state
+# management pattern and includes all requested data and legends.
 
 import streamlit as st
 import pandas as pd
@@ -18,7 +18,7 @@ import os
 import json
 import time
 
-# --- L0: CONFIGURATION, PATHS, AND SELF-SETUP (Unchanged) ---
+# --- L0: CONFIGURACIÓN, RUTAS Y AUTO-INICIALIZACIÓN (Unchanged) ---
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, 'config.yaml')
 MODEL_FILE = os.path.join(SCRIPT_DIR, 'demand_model.xgb')
@@ -29,12 +29,12 @@ def _train_and_save_model():
     try:
         with open(LOCK_FILE, 'x') as f: f.write(str(os.getpid()))
     except FileExistsError:
-        st.info("Another process is initializing the AI model. Please wait a moment...")
+        st.info("Otro proceso está inicializando el modelo de IA. Por favor espere un momento...")
         while os.path.exists(LOCK_FILE): time.sleep(2)
         return
     try:
-        with st.spinner("First-time setup: Training demand forecast model... This may take a minute."):
-            print("--- Starting one-time RedShield AI Model Training ---")
+        with st.spinner("Configuración inicial: Entrenando modelo de pronóstico de demanda... Esto puede tardar un minuto."):
+            print("--- Iniciando entrenamiento único del modelo RedShield AI ---")
             with open(CONFIG_FILE, 'r') as f: config = yaml.safe_load(f)
             model_params = config.get('data', {}).get('model_params', {})
             hours = 24 * 365; timestamps = pd.to_datetime(pd.date_range(start='2023-01-01', periods=hours, freq='h'))
@@ -43,7 +43,7 @@ def _train_and_save_model():
             model = xgb.XGBRegressor(objective='reg:squarederror', **model_params, random_state=42, n_jobs=-1); model.fit(X_train, y_train)
             model.save_model(MODEL_FILE); features = list(X_train.columns)
             with open(FEATURES_FILE, 'w') as f: json.dump(features, f)
-            print("--- Model Training Successful ---")
+            print("--- Entrenamiento del modelo finalizado con éxito ---")
     finally:
         if os.path.exists(LOCK_FILE): os.remove(LOCK_FILE)
 
@@ -56,7 +56,7 @@ def load_demand_model() -> tuple:
     if not os.path.exists(MODEL_FILE):
         _train_and_save_model()
         if not os.path.exists(MODEL_FILE):
-             st.error("Model training failed. Please check the logs."); st.stop()
+             st.error("Falló el entrenamiento del modelo. Por favor revise los logs."); st.stop()
         st.rerun()
     model = xgb.XGBRegressor(); model.load_model(MODEL_FILE)
     with open(FEATURES_FILE, 'r') as f: features = json.load(f)
@@ -103,10 +103,10 @@ class CognitiveEngine:
             if vitals.get('heart_rate', 100) > 140 or vitals.get('oxygen', 100) < 90: alerts.append({"Patient ID": pid, "Heart Rate": vitals.get('heart_rate'), "Oxygen %": vitals.get('oxygen'), "Ambulance": vitals.get('ambulance', 'N/A')})
         return alerts
     def find_best_route_for_incident(self, incident: Dict, risk_scores: Dict) -> Dict:
-        available_ambulances = {k: v for k, v in self.data_fabric.ambulances.items() if v.get('status') == 'Available'}
-        if not available_ambulances: return {"error": "No available ambulances."}
+        available_ambulances = {k: v for k, v in self.data_fabric.ambulances.items() if v.get('status') == 'Disponible'}
+        if not available_ambulances: return {"error": "No hay ambulancias disponibles."}
         incident_node = incident.get('node')
-        if not incident_node: return {"error": "Incident is not mapped to the road network."}
+        if not incident_node: return {"error": "Incidente no está mapeado a la red de calles."}
         amb_node_map = {name: find_nearest_node(self.data_fabric.road_graph, data['location']) for name, data in available_ambulances.items()}
         ambulance_unit, amb_start_node = min(amb_node_map.items(), key=lambda item: nx.shortest_path_length(self.data_fabric.road_graph, source=item[1], target=incident_node, weight='weight'))
         def cost_heuristic(u, v, d):
@@ -117,7 +117,7 @@ class CognitiveEngine:
             try:
                 eta_to_incident = nx.astar_path_length(self.data_fabric.road_graph, amb_start_node, incident_node, heuristic=None, weight=cost_heuristic); path_to_incident = nx.astar_path(self.data_fabric.road_graph, amb_start_node, incident_node, heuristic=None, weight=cost_heuristic); eta_to_hospital = nx.astar_path_length(self.data_fabric.road_graph, incident_node, h_node, heuristic=None, weight=cost_heuristic); path_to_hospital = nx.astar_path(self.data_fabric.road_graph, incident_node, h_node, heuristic=None, weight=cost_heuristic); total_eta = eta_to_incident + eta_to_hospital; full_path_nodes = path_to_incident + path_to_hospital[1:]; load_pct = _safe_division(h_data.get('load', 0), h_data.get('capacity', 1)); load_penalty = load_pct**2 * 20; total_score = total_eta * 0.8 + load_penalty * 0.2; options.append({"hospital": name, "eta_min": total_eta, "load_penalty": load_penalty, "load_pct": load_pct, "total_score": total_score, "path_nodes": full_path_nodes})
             except nx.NetworkXNoPath: continue
-        if not options: return {"error": "No valid hospital routes could be calculated."}
+        if not options: return {"error": "No se pudieron calcular rutas a hospitales."}
         best_option = min(options, key=lambda x: x.get('total_score', float('inf'))); path_coords = [[self.data_fabric.road_graph.nodes[node]['pos'][1], self.data_fabric.road_graph.nodes[node]['pos'][0]] for node in best_option['path_nodes']]; return {"ambulance_unit": ambulance_unit, "best_hospital": best_option.get('hospital'), "routing_analysis": pd.DataFrame(options).drop(columns=['path_nodes']).sort_values('total_score').reset_index(drop=True), "route_path_coords": path_coords}
 
 def kpi_card(icon: str, title: str, value: Any, color: str):
@@ -128,11 +128,11 @@ def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_co
         if load_pct < 0.7: return style_config['colors']['hospital_ok']
         if load_pct < 0.9: return style_config['colors']['hospital_warn']
         return style_config['colors']['hospital_crit']
-    hospital_df = pd.DataFrame([{"name": f"Hospital: {n}", "tooltip_text": f"Load: {d.get('load',0)}/{d.get('capacity',1)} ({_safe_division(d.get('load',0), d.get('capacity',1)):.0%})", "lon": d.get('location').x, "lat": d.get('location').y, "icon_data": {"url": style_config['icons']['hospital'], "width": 128, "height": 128, "anchorY": 128}, "color": get_hospital_color(d.get('load',0), d.get('capacity',1))} for n, d in data_fabric.hospitals.items()])
-    ambulance_df = pd.DataFrame([{"name": f"Unit: {n}", "tooltip_text": f"Status: {d.get('status', 'Unknown')}", "lon": d.get('location').x, "lat": d.get('location').y, "icon_data": {"url": style_config['icons']['ambulance'], "width": 128, "height": 128, "anchorY": 128}, "size": style_config['sizes']['ambulance_available'] if d.get('status') == 'Available' else style_config['sizes']['ambulance_mission'], "color": style_config['colors']['available'] if d.get('status') == 'Available' else style_config['colors']['on_mission']} for n, d in data_fabric.ambulances.items()])
-    incident_df = pd.DataFrame([{"name": f"Incident: {i.get('id', 'N/A')}", "tooltip_text": f"Priority: {i.get('priority', 1)}", "lon": i.get('location').x, "lat": i.get('location').y, "size": style_config['sizes']['incident_base'] + i.get('priority', 1)**2, "id": i.get('id')} for i in all_incidents])
+    hospital_df = pd.DataFrame([{"name": f"Hospital: {n}", "tooltip_text": f"Carga: {d.get('load',0)}/{d.get('capacity',1)} ({_safe_division(d.get('load',0), d.get('capacity',1)):.0%})", "lon": d.get('location').x, "lat": d.get('location').y, "icon_data": {"url": style_config['icons']['hospital'], "width": 128, "height": 128, "anchorY": 128}, "color": get_hospital_color(d.get('load',0), d.get('capacity',1))} for n, d in data_fabric.hospitals.items()])
+    ambulance_df = pd.DataFrame([{"name": f"Unidad: {n}", "tooltip_text": f"Estatus: {d.get('status', 'Desconocido')}", "lon": d.get('location').x, "lat": d.get('location').y, "icon_data": {"url": style_config['icons']['ambulance'], "width": 128, "height": 128, "anchorY": 128}, "size": style_config['sizes']['ambulance_available'] if d.get('status') == 'Disponible' else style_config['sizes']['ambulance_mission'], "color": style_config['colors']['available'] if d.get('status') == 'Disponible' else style_config['colors']['on_mission']} for n, d in data_fabric.ambulances.items()])
+    incident_df = pd.DataFrame([{"name": f"Incidente: {i.get('id', 'N/A')}", "tooltip_text": f"Prioridad: {i.get('priority', 1)}", "lon": i.get('location').x, "lat": i.get('location').y, "size": style_config['sizes']['incident_base'] + i.get('priority', 1)**2, "id": i.get('id')} for i in all_incidents])
     heatmap_df = pd.DataFrame([{"lon": i.get('location').x, "lat": i.get('location').y} for i in all_incidents])
-    zones_gdf = gpd.GeoDataFrame.from_dict(data_fabric.zones, orient='index').set_geometry('polygon'); zones_gdf['name'] = zones_gdf.index; zones_gdf['risk'] = zones_gdf.index.map(risk_scores).fillna(0); zones_gdf['tooltip_text'] = zones_gdf.apply(lambda row: f"Zone: {row.name}<br/>Risk Score: {row.risk:.2f}", axis=1)
+    zones_gdf = gpd.GeoDataFrame.from_dict(data_fabric.zones, orient='index').set_geometry('polygon'); zones_gdf['name'] = zones_gdf.index; zones_gdf['risk'] = zones_gdf.index.map(risk_scores).fillna(0); zones_gdf['tooltip_text'] = zones_gdf.apply(lambda row: f"Zona: {row.name}<br/>Puntaje de Riesgo: {row.risk:.2f}", axis=1)
     max_risk = max(1, zones_gdf['risk'].max()); zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [220, 53, 69, int(200 * _safe_division(r,max_risk))]).tolist()
     return zones_gdf, hospital_df, ambulance_df, incident_df, heatmap_df
 def create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, heatmap_df, route_info=None, style_config=None):
@@ -142,18 +142,18 @@ def create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, heatma
     view_state = pdk.ViewState(latitude=32.525, longitude=-117.02, zoom=11.5, bearing=0, pitch=50); tooltip = {"html": "<b>{name}</b><br/>{tooltip_text}", "style": {"backgroundColor": "#333", "color": "white", "border": "1px solid #555", "border-radius": "5px", "padding": "5px"}}; return pdk.Deck(layers=layers, initial_view_state=view_state, map_style="mapbox://styles/mapbox/dark-v10", tooltip=tooltip)
 def display_ai_rationale(route_info: Dict):
     st.markdown("---")
-    st.markdown("> The AI balances travel time, route safety, and hospital capacity to find the optimal destination.")
-    st.subheader("AI Dispatch Rationale"); best = route_info['routing_analysis'].iloc[0]; st.success(f"**Recommended:** Dispatch `{route_info['ambulance_unit']}` to `{route_info['best_hospital']}`", icon="✅"); st.markdown(f"**Reason:** Optimal balance of the lowest travel time and hospital readiness. The A* algorithm calculated a risk-adjusted ETA of **{best.get('eta_min', 0):.1f} min**.")
+    st.markdown("> La IA balancea tiempo de viaje, seguridad de la ruta y capacidad hospitalaria para encontrar el destino óptimo.")
+    st.subheader("Lógica del Despacho de IA"); best = route_info['routing_analysis'].iloc[0]; st.success(f"**Recomendado:** Despachar unidad `{route_info['ambulance_unit']}` a `{route_info['best_hospital']}`", icon="✅"); st.markdown(f"**Razón:** Balance óptimo del menor tiempo de viaje y la disponibilidad del hospital. El algoritmo A* calculó un ETA ajustado por riesgo de **{best.get('eta_min', 0):.1f} min**.")
     if len(route_info['routing_analysis']) > 1:
         rejected = route_info['routing_analysis'].iloc[1]; reasons = []
-        if (rejected.get('eta_min', 0) / best.get('eta_min', 1)) > 1.15: reasons.append(f"a significantly longer ETA ({rejected.get('eta_min', 0):.1f} min)")
-        if (rejected.get('load_penalty', 0) > best.get('load_penalty', 1)) > 1.2: reasons.append(f"prohibitive hospital load (`{rejected.get('load_pct', 0):.0%}`)")
-        if not reasons: reasons.append("it was a close second but less optimal overall")
-        st.error(f"**Alternative Rejected:** `{rejected.get('hospital', 'N/A')}` due to {', '.join(reasons)}.", icon="❌")
+        if (rejected.get('eta_min', 0) / best.get('eta_min', 1)) > 1.15: reasons.append(f"un ETA significativamente más largo ({rejected.get('eta_min', 0):.1f} min)")
+        if (rejected.get('load_penalty', 0) > best.get('load_penalty', 1)) > 1.2: reasons.append(f"una carga hospitalaria prohibitiva (`{rejected.get('load_pct', 0):.0%}`)")
+        if not reasons: reasons.append("fue un cercano segundo lugar, pero menos óptimo en general")
+        st.error(f"**Alternativa Rechazada:** `{rejected.get('hospital', 'N/A')}` debido a {', '.join(reasons)}.", icon="❌")
 
-# --- L3: MAIN APPLICATION ---
+# --- L3: APLICACIÓN PRINCIPAL ---
 def main():
-    st.set_page_config(page_title="RedShield AI: Elite Command", layout="wide", initial_sidebar_state="expanded")
+    st.set_page_config(page_title="RedShield AI: Comando Élite", layout="wide", initial_sidebar_state="expanded")
     if 'engine' not in st.session_state:
         config = load_config(CONFIG_FILE); st.session_state.engine = CognitiveEngine(DataFusionFabric(config))
     engine = st.session_state.engine; data_fabric = engine.data_fabric
@@ -169,114 +169,114 @@ def main():
             st.session_state.selected_incident = None; st.session_state.route_info = None
 
     with st.sidebar:
-        st.title("RedShield AI"); st.write("Tijuana Emergency Intelligence"); tab_choice = st.radio("Navigation", ["Live Operations", "System Analytics", "Strategic Simulation"], label_visibility="collapsed"); st.divider();
-        if st.button("🔄 Force Refresh Live Data", use_container_width=True): 
+        st.title("RedShield AI"); st.write("Inteligencia de Emergencias de Tijuana"); tab_choice = st.radio("Navegación", ["Operaciones en Vivo", "Análisis del Sistema", "Simulación Estratégica"], label_visibility="collapsed"); st.divider();
+        if st.button("🔄 Forzar Actualización de Datos", use_container_width=True): 
             data_fabric.get_live_state.clear(); st.session_state.selected_incident = None; st.session_state.route_info = None
             if "incident_selector" in st.session_state: st.session_state.incident_selector = None
             st.rerun()
-        st.info("Select an incident from the dropdown in the right panel.")
+        st.info("Seleccione un incidente del menú en el panel derecho.")
         
-    if tab_choice == "Live Operations":
-        kpi_cols = st.columns(3); available_units = sum(1 for v in data_fabric.ambulances.values() if v.get('status') == 'Available'); avg_load = np.mean([_safe_division(h.get('load',0),h.get('capacity',1)) for h in data_fabric.hospitals.values()]);
-        with kpi_cols[0]: kpi_card("🚑", "Units Available", f"{available_units}/{len(data_fabric.ambulances)}", "#00A9FF")
-        with kpi_cols[1]: kpi_card("🏥", "Avg. Hospital Load", f"{avg_load:.0%}", "#FFB000")
-        with kpi_cols[2]: kpi_card("🚨", "Active Incidents", len(all_incidents), "#DC3545")
+    if tab_choice == "Operaciones en Vivo":
+        kpi_cols = st.columns(3); available_units = sum(1 for v in data_fabric.ambulances.values() if v.get('status') == 'Disponible'); avg_load = np.mean([_safe_division(h.get('load',0),h.get('capacity',1)) for h in data_fabric.hospitals.values()]);
+        with kpi_cols[0]: kpi_card("🚑", "Unidades Disponibles", f"{available_units}/{len(data_fabric.ambulances)}", "#00A9FF")
+        with kpi_cols[1]: kpi_card("🏥", "Carga Hosp. Prom.", f"{avg_load:.0%}", "#FFB000")
+        with kpi_cols[2]: kpi_card("🚨", "Incidentes Activos", len(all_incidents), "#DC3545")
         
-        with st.expander("What do these KPIs mean?"):
+        with st.expander("¿Qué significan estos indicadores (KPIs)?"):
             st.markdown("""
-            - **<font color='#00A9FF'>Units Available:</font>** Shows the number of ambulances ready for dispatch. A low number indicates high operational tempo or resource strain.
-            - **<font color='#FFB000'>Avg. Hospital Load:</font>** The average capacity across all hospitals. A high percentage suggests the entire system is under stress, and diversions may be necessary.
-            - **<font color='#DC3545'>Active Incidents:</font>** The current number of unresolved emergencies in the city.
+            - **<font color='#00A9FF'>Unidades Disponibles:</font>** Muestra el número de ambulancias listas para ser despachadas. Un número bajo indica un alto ritmo operativo o falta de recursos.
+            - **<font color='#FFB000'>Carga Hosp. Prom.:</font>** El promedio de capacidad ocupada en todos los hospitales. Un porcentaje alto sugiere que todo el sistema está bajo estrés.
+            - **<font color='#DC3545'>Incidentes Activos:</font>** El número actual de emergencias sin resolver en la ciudad.
             """, unsafe_allow_html=True)
         st.divider()
 
         map_col, ticket_col = st.columns((2.5, 1.5))
         
         with ticket_col:
-            st.subheader("Dispatch Ticket")
+            st.subheader("Boleta de Despacho")
             st.selectbox(
-                "Select an Active Incident:", options=[None] + sorted(list(incident_dict.keys())),
-                format_func=lambda x: "Choose an incident..." if x is None else f"{x} (Priority {incident_dict[x]['priority']})",
+                "Seleccione un Incidente Activo:", options=[None] + sorted(list(incident_dict.keys())),
+                format_func=lambda x: "Elegir un incidente..." if x is None else f"{x} (Prioridad {incident_dict.get(x, {}).get('priority', 'N/A')})",
                 key="incident_selector", on_change=handle_incident_selection,
             )
             if st.session_state.get('selected_incident'):
                 if st.session_state.get('route_info') and "error" not in st.session_state.route_info:
-                    st.metric("Responding to Incident", st.session_state.selected_incident.get('id', 'N/A'))
+                    st.metric("Respondiendo a Incidente", st.session_state.selected_incident.get('id', 'N/A'))
                     display_ai_rationale(st.session_state.route_info)
-                    with st.expander("Show Detailed Routing Analysis"):
+                    with st.expander("Mostrar Análisis de Ruta Detallado"):
                         st.dataframe(st.session_state.route_info['routing_analysis'].set_index('hospital'))
                 else:
-                    st.error(f"Routing Error: {st.session_state.get('route_info', {}).get('error', 'Could not calculate a route.')}")
+                    st.error(f"Error de Ruteo: {st.session_state.get('route_info', {}).get('error', 'No se pudo calcular una ruta.')}")
             else:
-                st.info("Select an incident from the dropdown above to generate a dispatch plan.")
+                st.info("Seleccione un incidente del menú de arriba para generar un plan de despacho.")
         
         with map_col:
-            st.subheader("City Operations Map")
-            with st.expander("Show Map Legend", expanded=True):
+            st.subheader("Mapa de Operaciones de la Ciudad")
+            with st.expander("Mostrar Leyenda del Mapa", expanded=True):
                 st.markdown("""
-                **Icons:**
-                - 🚑 **Ambulance (Large, Bright):** Available for dispatch.
-                - 🚑 **Ambulance (Small, Gray):** Currently on a mission.
-                - 🏥 **Hospital (Green <70%):** Accepting patients, low load.
-                - 🏥 **Hospital (Orange <90%):** High load, use caution.
-                - 🏥 **Hospital (Red >=90%):** Critical load, avoid if possible.
-                - 🚨 **Pulsing Circle:** Location of an active emergency.
+                **Iconos:**
+                - 🚑 **Ambulancia (Grande, Brillante):** Disponible para despacho.
+                - 🚑 **Ambulancia (Pequeña, Gris):** Actualmente en una misión.
+                - 🏥 **Hospital (Verde <70%):** Aceptando pacientes, carga baja.
+                - 🏥 **Hospital (Naranja <90%):** Carga alta, usar con precaución.
+                - 🏥 **Hospital (Rojo >=90%):** Carga crítica, evitar si es posible.
+                - 🚨 **Círculo Pulsante:** Ubicación de una emergencia activa.
                 
-                **Zone Analysis:**
-                - **Color (Red Intensity):** Heatmap of incident density. More intense red means more incidents in that area.
-                - **Elevation (Height):** Composite risk score from traffic, crime, and road quality. Taller zones are riskier to travel through.
+                **Análisis de Zona:**
+                - **Color (Intensidad de Rojo):** Mapa de calor de la densidad de incidentes. Un rojo más intenso significa más incidentes en esa área.
+                - **Elevación (Altura):** Puntaje de riesgo compuesto por tráfico, crimen y calidad de las vías. Las zonas más altas son más riesgosas para transitar.
                 """)
             zones_gdf, hosp_df, amb_df, inc_df, heat_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, config.get('styling', {}))
             deck = create_deck_gl_map(zones_gdf, hosp_df, amb_df, inc_df, heat_df, st.session_state.get('route_info'), config.get('styling', {}))
             st.pydeck_chart(deck, use_container_width=True)
 
-    elif tab_choice == "System Analytics":
-        st.header("System-Wide Analytics & AI Insights")
+    elif tab_choice == "Análisis del Sistema":
+        st.header("Análisis del Sistema e Inteligencia Artificial")
         forecast_col, feature_col = st.columns(2)
         with forecast_col:
-            st.subheader("24-Hour Probabilistic Demand Forecast")
+            st.subheader("Pronóstico Probabilístico de Demanda (24h)")
             st.info("""
-            **What it shows:** The AI's prediction for the total number of emergency calls city-wide for the next 24 hours.
-            - The **solid line** is the most likely number of calls.
-            - The **shaded area** represents the 95% confidence interval—the likely range of calls.
+            **Qué muestra:** La predicción de la IA para el número total de llamadas de emergencia en toda la ciudad para las próximas 24 horas.
+            - La **línea sólida** es el número más probable de llamadas.
+            - El **área sombreada** representa el intervalo de confianza del 95%, el rango probable de llamadas.
             
-            **How to use it:** A high predicted demand may warrant calling in additional staff or pre-positioning units in expected hotspots.
+            **Cómo usarlo:** Una alta demanda predicha puede justificar la asignación de personal adicional o el pre-posicionamiento de unidades en puntos calientes esperados.
             """)
-            with st.spinner("Calculating 24-hour forecast..."):
+            with st.spinner("Calculando pronóstico de 24 horas..."):
                 future_hours = pd.date_range(start=datetime.now(), periods=24, freq='h'); forecast_data = []
                 for ts in future_hours:
-                    features = {"hour": ts.hour, "day_of_week": ts.weekday(), "is_quincena": ts.day in [14,15,16,29,30,31,1], 'temperature': 22, 'border_wait': 75}; mean_pred = engine.predict_citywide_demand(features); std_dev = mean_pred * 0.10; forecast_data.append({'time': ts, 'Predicted Calls': mean_pred, 'Upper Bound': mean_pred + 1.96 * std_dev, 'Lower Bound': np.maximum(0, mean_pred - 1.96 * std_dev)})
+                    features = {"hour": ts.hour, "day_of_week": ts.weekday(), "is_quincena": ts.day in [14,15,16,29,30,31,1], 'temperature': 22, 'border_wait': 75}; mean_pred = engine.predict_citywide_demand(features); std_dev = mean_pred * 0.10; forecast_data.append({'time': ts, 'Llamadas Predichas': mean_pred, 'Límite Superior': mean_pred + 1.96 * std_dev, 'Límite Inferior': np.maximum(0, mean_pred - 1.96 * std_dev)})
                 st.area_chart(pd.DataFrame(forecast_data).set_index('time'))
         with feature_col:
-            st.subheader("Demand Model: Feature Importance (XAI)")
+            st.subheader("Importancia de Factores del Modelo (XAI)")
             st.info("""
-            **What it shows:** The factors that are most influential on our call demand forecast *right now*. A higher bar means that factor has a bigger impact.
+            **Qué muestra:** Los factores que tienen el mayor impacto en nuestro pronóstico de demanda de llamadas *en este momento*. Una barra más alta significa que ese factor tiene un mayor impacto.
             
-            **How to use it:** This explains the 'why' behind the forecast. If `border_wait` is high on the chart, it tells you that border traffic is a primary driver of call volume today, which can inform strategic decisions.
+            **Cómo usarlo:** Esto explica el 'porqué' detrás de la predicción de la IA. Si `border_wait` (espera en la frontera) es alto en el gráfico, le dice que el tráfico fronterizo es un impulsor principal del volumen de llamadas hoy, lo que puede informar decisiones estratégicas.
             """)
             feature_importance = pd.DataFrame({'feature': engine.model_features, 'importance': engine.demand_model.feature_importances_}).sort_values('importance', ascending=True); st.bar_chart(feature_importance.set_index('feature'))
         st.divider(); col1, col2 = st.columns(2)
         with col1:
-            st.subheader("Hospital Load Status"); st.markdown("Real-time capacity of all receiving hospitals.")
+            st.subheader("Estatus de Carga Hospitalaria"); st.markdown("Capacidad en tiempo real de todos los hospitales receptores.")
             for name, data in data_fabric.hospitals.items():
                 load_pct = _safe_division(data['load'], data['capacity']); st.markdown(f"**{name}** ({data['load']}/{data['capacity']})"); st.progress(load_pct)
         with col2:
-            st.subheader("Critical Patient Alerts"); st.markdown("Patients with critical vital signs from remote monitoring.")
+            st.subheader("Alertas de Pacientes Críticos"); st.markdown("Pacientes con signos vitales críticos de monitoreo remoto.")
             patient_alerts = engine.get_patient_alerts()
-            if not patient_alerts: st.success("✅ No critical patient alerts at this time.")
+            if not patient_alerts: st.success("✅ No hay alertas de pacientes críticos en este momento.")
             else:
-                for alert in patient_alerts: st.error(f"**Patient {alert.get('Patient ID')}:** HR: {alert.get('Heart Rate')}, O2: {alert.get('Oxygen %')}% | Unit: {alert.get('Ambulance')}", icon="❤️‍🩹")
-    elif tab_choice == "Strategic Simulation":
-        st.header("Strategic Simulation & 'What-If' Analysis")
+                for alert in patient_alerts: st.error(f"**Paciente {alert.get('Patient ID')}:** FC: {alert.get('Heart Rate')}, O2: {alert.get('Oxygen %')}% | Unidad: {alert.get('Ambulance')}", icon="❤️‍🩹")
+    elif tab_choice == "Simulación Estratégica":
+        st.header("Simulación Estratégica y Análisis 'What-If'")
         st.info("""
-        This tool lets you test system resilience under extreme conditions. By increasing the traffic multiplier, you can simulate events like rush hour, holidays, or major road closures to see how they impact zonal risk.
+        Esta herramienta le permite probar la resiliencia del sistema en condiciones extremas. Al aumentar el multiplicador de tráfico, puede simular eventos como la hora pico, días festivos o cierres de carreteras importantes para ver cómo impactan el riesgo zonal.
         """)
-        sim_traffic_spike = st.slider("Simulate City-Wide Traffic Multiplier", 1.0, 5.0, 1.0, 0.25)
-        if st.button("Run Simulation", use_container_width=True):
+        sim_traffic_spike = st.slider("Simular Multiplicador de Tráfico en Toda la Ciudad", 1.0, 5.0, 1.0, 0.25)
+        if st.button("Ejecutar Simulación", use_container_width=True):
             sim_risk_scores = {};
             for zone, s_data in data_fabric.zones.items():
                 l_data = live_state.get(zone, {}); sim_risk = (l_data.get('traffic', 0.5) * sim_traffic_spike * 0.6 + (1 - s_data.get('road_quality', 0.5)) * 0.2 + s_data.get('crime', 0.5) * 0.2); sim_risk_scores[zone] = sim_risk * (1 + len(l_data.get('active_incidents', [])))
-            st.subheader("Simulated Zonal Risk Scores"); st.bar_chart(pd.DataFrame.from_dict(sim_risk_scores, orient='index', columns=['Simulated Risk']).sort_values('Simulated Risk', ascending=False)); st.markdown("High-risk zones under these simulated conditions would require pre-emptive resource staging.")
+            st.subheader("Puntajes de Riesgo Zonal Simulados"); st.bar_chart(pd.DataFrame.from_dict(sim_risk_scores, orient='index', columns=['Riesgo Simulado']).sort_values('Riesgo Simulado', ascending=False)); st.markdown("Las zonas de alto riesgo bajo estas condiciones simuladas requerirían un posicionamiento preventivo de recursos.")
 
 if __name__ == "__main__":
     main()
