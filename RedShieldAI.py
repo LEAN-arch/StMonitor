@@ -1,7 +1,6 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL, GUARANTEED DEPLOYMENT VERSION: The configuration is now embedded
-# directly in this script with corrected YAML syntax, eliminating all external file
-# dependencies and guaranteeing that all assets are always loaded.
+# FINAL, ROBUST DEPLOYMENT VERSION: Fixes the XGBoost UserWarning by saving the
+# model in the recommended '.json' format, ensuring future compatibility.
 
 import streamlit as st
 import pandas as pd
@@ -20,13 +19,11 @@ import time
 
 # --- L0: CONFIGURATION, PATHS, AND SELF-SETUP ---
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
-MODEL_FILE = os.path.join(SCRIPT_DIR, 'demand_model.xgb')
+# SME FIX: Changed model filename to the recommended .json format
+MODEL_FILE = os.path.join(SCRIPT_DIR, 'demand_model.json') 
 FEATURES_FILE = os.path.join(SCRIPT_DIR, 'model_features.json')
 LOCK_FILE = os.path.join(SCRIPT_DIR, '.model_lock')
 
-# ##################################################################
-# ###############      THE DEFINITIVE FIX        ###############
-# ##################################################################
 def get_app_config() -> Dict:
     """Returns the application configuration as a dictionary. The YAML is embedded to prevent file loading issues."""
     config_string = """
@@ -88,7 +85,6 @@ styling:
   icons: { hospital: "https://img.icons8.com/color/96/hospital-3.png", ambulance: "https://img.icons8.com/color/96/ambulance.png" }
 """
     return yaml.safe_load(config_string)
-# ##################################################################
 
 @st.cache_resource
 def load_demand_model() -> tuple:
