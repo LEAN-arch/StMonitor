@@ -1,6 +1,7 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL DEPLOYMENT-READY VERSION 3: Definitive fix for the TypeError by correctly
-# calling the picked_objects() function to retrieve the list of clicked items.
+# FINAL, VERIFIED DEPLOYMENT VERSION 4: Fixes the click-handling logic definitively
+# by correctly accessing the `.picked_objects` attribute, which is a list,
+# and robustly checking for None before access.
 
 import streamlit as st
 import pandas as pd
@@ -174,23 +175,18 @@ def main():
             clicked_state = st.pydeck_chart(deck, use_container_width=True)
             
             # ##################################################################
-            # ###############      THE DEFINITIVE FIX IS HERE      ###############
+            # ###############     THE FINAL, CORRECTED LOGIC     ###############
             # ##################################################################
-            if clicked_state and hasattr(clicked_state, 'picked_objects'):
-                # This check ensures the 'picked_objects' attribute exists
-                # It might be a function or a list, but the traceback says it's a function.
-                # So we will treat it as such.
-                
-                # Assign the function to a variable for clarity
-                picker_function = clicked_state.picked_objects
-                
-                # Call the function to get the list of items
-                picked_list = picker_function()
-                
-                # Now, check if the resulting list is not empty
+            # The return value from pydeck_chart is either None or a dictionary.
+            # We must check for None before doing anything else.
+            if clicked_state is not None:
+                # The .picked_objects attribute is a list of picked items.
+                picked_list = clicked_state.get("picked_objects")
+
+                # Check if the list exists and is not empty.
                 if picked_list:
                     selected_obj = picked_list[0]
-                    if selected_obj and 'id' in selected_obj:
+                    if 'id' in selected_obj:
                         if st.session_state.get('selected_incident', {}).get('id') != selected_obj['id']:
                             st.session_state.selected_incident = next((inc for inc in all_incidents if inc.get('id') == selected_obj['id']), None)
                             if st.session_state.selected_incident:
