@@ -198,15 +198,12 @@ def main():
         with map_col:
             zones_gdf, hospital_df, ambulance_df, incident_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, config.get('styling', {}))
             
-            # BUG FIX: The `on_select` parameter is removed. The return value is now checked robustly.
-            # The return value from st.pydeck_chart is a dictionary, not an object.
-            clicked_state = st.pydeck_chart(
-                create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, st.session_state.get('route_info'), config.get('styling', {})), 
-                key="deck_map"
-            )
+            # BUG FIX: Replaced the failing `on_select` parameter and now check the return value robustly.
+            # The return value is a dictionary-like object, and we access its `picked_objects` attribute.
+            clicked_state = st.pydeck_chart(create_deck_gl_map(zones_gdf, hospital_df, ambulance_df, incident_df, st.session_state.get('route_info'), config.get('styling', {})), key="deck_map")
             
-            if clicked_state and clicked_state.get("picked_objects"):
-                selected_obj = clicked_state["picked_objects"][0]
+            if clicked_state and clicked_state.picked_objects:
+                selected_obj = clicked_state.picked_objects[0]
                 if selected_obj and 'id' in selected_obj:
                     if st.session_state.get('selected_incident', {}).get('id') != selected_obj['id']:
                         st.session_state.selected_incident = next((inc for inc in all_incidents if inc.get('id') == selected_obj['id']), None)
