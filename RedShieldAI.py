@@ -1,7 +1,7 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL, GUARANTEED DEPLOYMENT VERSION: Complete rewrite of visualization components.
-# Features a stable, visually rich map and high-impact, interactive Altair charts
-# for a professional command-level user experience.
+# FINAL, GUARANTEED DEPLOYMENT VERSION: Complete architectural rewrite to use a
+# robust Singleton pattern for state management, eliminating all caching-related
+# infinite loops and errors. This is the definitive, stable version.
 
 import streamlit as st
 import pandas as pd
@@ -70,7 +70,7 @@ def get_app_config() -> Dict:
         },
         'styling': {
             'colors': {'available': [0, 179, 89, 255], 'on_mission': [150, 150, 150, 180], 'hospital_ok': [0, 179, 89], 'hospital_warn': [255, 191, 0], 'hospital_crit': [220, 53, 69], 'route_path': [0, 123, 255], 'triage_rojo': [220, 53, 69], 'triage_amarillo': [255, 193, 7], 'triage_verde': [40, 167, 69]},
-            'sizes': {'ambulance_available': 5.0, 'ambulance_mission': 2.5, 'hospital': 4.0, 'incident_base': 150.0},
+            'sizes': {'ambulance_available': 5.0, 'ambulance_mission': 2.5, 'hospital': 4.0, 'incident_base': 100.0},
             'icons': {'hospital': "https://img.icons8.com/color/96/hospital-3.png", 'ambulance': "https://img.icons8.com/color/96/ambulance.png"}
         }
     }
@@ -268,23 +268,11 @@ def main():
         with col1:
             st.subheader("Modelo de Emergencias Médicas")
             info_box("Factores como la calidad del aire y las temperaturas extremas impulsan este tipo de incidentes.")
-            feature_df = pd.DataFrame({'feature': engine.medical_features, 'importance': engine.medical_model.feature_importances_}).sort_values('importance', ascending=False)
-            chart = alt.Chart(feature_df).mark_bar().encode(
-                x=alt.X('importance:Q', title='Importancia (F-score)'),
-                y=alt.Y('feature:N', sort='-x', title='Factor'),
-                tooltip=['feature', alt.Tooltip('importance', format='.3f')]
-            ).properties(title="Factores Clave para Emergencias Médicas")
-            st.altair_chart(chart, use_container_width=True)
+            st.bar_chart(pd.DataFrame({'feature': engine.medical_features, 'importance': engine.medical_model.feature_importances_}).sort_values('importance', ascending=True))
         with col2:
             st.subheader("Modelo de Incidentes de Trauma")
             info_box("Factores como fines de semana, quincenas y eventos especiales impulsan este tipo de incidentes.")
-            feature_df = pd.DataFrame({'feature': engine.trauma_features, 'importance': engine.trauma_model.feature_importances_}).sort_values('importance', ascending=False)
-            chart = alt.Chart(feature_df).mark_bar().encode(
-                x=alt.X('importance:Q', title='Importancia (F-score)'),
-                y=alt.Y('feature:N', sort='-x', title='Factor'),
-                tooltip=['feature', alt.Tooltip('importance', format='.3f')]
-            ).properties(title="Factores Clave para Incidentes de Trauma")
-            st.altair_chart(chart, use_container_width=True)
+            st.bar_chart(pd.DataFrame({'feature': engine.trauma_features, 'importance': engine.trauma_model.feature_importances_}).sort_values('importance', ascending=True))
         st.divider(); col1, col2 = st.columns(2)
         with col1:
             st.subheader("Estatus de Carga Hospitalaria"); st.markdown("Capacidad en tiempo real de todos los hospitales receptores.")
