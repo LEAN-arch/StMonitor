@@ -6,7 +6,7 @@ data:
     "Hospital General": { location: [32.5295, -117.0182], capacity: 100, load: 85 }
     "IMSS Clínica 1": { location: [32.5121, -117.0145], capacity: 120, load: 70 }
     "Angeles": { location: [32.5300, -117.0200], capacity: 100, load: 95 }
-    "Cruz Roja Tijuana": { location: [32.5283, -117.0255], capacity: 60, load: 60 } # NEW - Geocoded
+    "Cruz Roja Tijuana": { location: [32.5283, -117.0255], capacity: 70, load: 60 } # Geocoded to Alfonso Gamboa
   ambulances:
     "A01": { location: [32.515, -117.04], status: "Available" }
     "A02": { location: [32.535, -116.96], status: "Available" }
@@ -34,12 +34,12 @@ data:
       "N_H_Gen": { pos: [32.5295, -117.0182] }
       "N_H_IMSS": { pos: [32.5121, -117.0145] }
       "N_H_Ang": { pos: [32.5300, -117.0200] }
-      "N_H_CruzR": { pos: [32.5283, -117.0255] } # NEW
+      "N_H_CruzR": { pos: [32.5283, -117.0255] }
       "N_Amb_A01": { pos: [32.515, -117.04] }
     edges:
       - ["N_ZR1", "N_ZR2", 2.5]
       - ["N_ZR1", "N_H_Ang", 0.5]
-      - ["N_ZR1", "N_H_CruzR", 0.7] # NEW
+      - ["N_ZR1", "N_H_CruzR", 0.7]
       - ["N_ZR2", "N_H_Gen", 0.8]
       - ["N_ZR2", "N_H_IMSS", 3.0]
       - ["N_ZR1", "N_Amb_A01", 4.0]
