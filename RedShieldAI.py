@@ -1,6 +1,7 @@
 # RedShieldAI_SME_Self_Contained_App.py
-# FINAL, ROBUST DEPLOYMENT VERSION: Fixes the XGBoost UserWarning by saving the
-# model in the recommended '.json' format, ensuring future compatibility.
+# FINAL, ROBUST DEPLOYMENT VERSION: Fixes the infinite loop by removing all file I/O
+# for the model. The model is now trained once and held in memory using
+# st.cache_resource, the correct pattern for this use case.
 
 import streamlit as st
 import pandas as pd
@@ -17,12 +18,7 @@ import os
 import json
 import time
 
-# --- L0: CONFIGURATION, PATHS, AND SELF-SETUP ---
-SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
-# SME FIX: Changed model filename to the recommended .json format
-MODEL_FILE = os.path.join(SCRIPT_DIR, 'demand_model.json') 
-FEATURES_FILE = os.path.join(SCRIPT_DIR, 'model_features.json')
-LOCK_FILE = os.path.join(SCRIPT_DIR, '.model_lock')
+# --- L0: CONFIGURATION AND CORE UTILITIES ---
 
 def get_app_config() -> Dict:
     """Returns the application configuration as a dictionary. The YAML is embedded to prevent file loading issues."""
@@ -58,26 +54,9 @@ data:
     "P003": { heart_rate: 150, oxygen: 99, ambulance: "A02" }
   road_network:
     nodes:
-      "N_ZR1": { pos: [32.525, -117.02] }
-      "N_ZR2": { pos: [32.528, -117.01] }
-      "N_OT1": { pos: [32.535, -116.965] }
-      "N_PL1": { pos: [32.52, -117.12] }
-      "N_H_Gen": { pos: [32.5295, -117.0182] }
-      "N_H_IMSS": { pos: [32.5121, -117.0145] }
-      "N_H_Ang": { pos: [32.5300, -117.0200] }
-      "N_H_CruzR": { pos: [32.5283, -117.0255] }
-      "N_Amb_A01": { pos: [32.515, -117.04] }
+      "N_ZR1": { pos: [32.525, -117.02] }; "N_ZR2": { pos: [32.528, -117.01] }; "N_OT1": { pos: [32.535, -116.965] }; "N_PL1": { pos: [32.52, -117.12] }; "N_H_Gen": { pos: [32.5295, -117.0182] }; "N_H_IMSS": { pos: [32.5121, -117.0145] }; "N_H_Ang": { pos: [32.5300, -117.0200] }; "N_H_CruzR": { pos: [32.5283, -117.0255] }; "N_Amb_A01": { pos: [32.515, -117.04] }
     edges:
-      - ["N_ZR1", "N_ZR2", 2.5]
-      - ["N_ZR1", "N_H_Ang", 0.5]
-      - ["N_ZR1", "N_H_CruzR", 0.7]
-      - ["N_ZR2", "N_H_Gen", 0.8]
-      - ["N_ZR2", "N_H_IMSS", 3.0]
-      - ["N_ZR1", "N_Amb_A01", 4.0]
-      - ["N_ZR1", "N_PL1", 8.0]
-      - ["N_ZR2", "N_OT1", 9.0]
-      - ["N_PL1", "N_Amb_A01", 5.0]
-      - ["N_OT1", "N_H_IMSS", 6.0]
+      - ["N_ZR1", "N_ZR2", 2.5]; - ["N_ZR1", "N_H_Ang", 0.5]; - ["N_ZR1", "N_H_CruzR", 0.7]; - ["N_ZR2", "N_H_Gen", 0.8]; - ["N_ZR2", "N_H_IMSS", 3.0]; - ["N_ZR1", "N_Amb_A01", 4.0]; - ["N_ZR1", "N_PL1", 8.0]; - ["N_ZR2", "N_OT1", 9.0]; - ["N_PL1", "N_Amb_A01", 5.0]; - ["N_OT1", "N_H_IMSS", 6.0]
   model_params: { n_estimators: 250, max_depth: 5, learning_rate: 0.05, subsample: 0.8, colsample_bytree: 0.8 }
 styling:
   colors: { available: [0, 179, 89, 255], on_mission: [150, 150, 150, 180], hospital_ok: [0, 179, 89], hospital_warn: [255, 191, 0], hospital_crit: [220, 53, 69], incident_halo: [220, 53, 69], route_path: [0, 123, 255] }
@@ -86,27 +65,11 @@ styling:
 """
     return yaml.safe_load(config_string)
 
-@st.cache_resource
-def load_demand_model() -> tuple:
-    if not os.path.exists(MODEL_FILE):
-        with st.spinner("Configuración inicial: Entrenando modelo de pronóstico de demanda..."):
-            config = get_app_config()
-            model_params = config.get('data', {}).get('model_params', {})
-            hours = 24 * 365; timestamps = pd.to_datetime(pd.date_range(start='2023-01-01', periods=hours, freq='h'))
-            X_train = pd.DataFrame({'hour': timestamps.hour, 'day_of_week': timestamps.dayofweek, 'is_quincena': timestamps.day.isin([14,15,16,29,30,31,1]), 'temperature': np.random.normal(22, 5, hours), 'border_wait': np.random.randint(20, 120, hours)})
-            y_train = np.maximum(0, 5 + 3 * np.sin(X_train['hour'] * 2 * np.pi / 24) + X_train['is_quincena'] * 5 + X_train['border_wait']/20 + np.random.randn(hours)).astype(int)
-            model = xgb.XGBRegressor(objective='reg:squarederror', **model_params, random_state=42, n_jobs=-1); model.fit(X_train, y_train)
-            model.save_model(MODEL_FILE); features = list(X_train.columns)
-            with open(FEATURES_FILE, 'w') as f: json.dump(features, f)
-        st.rerun()
-    model = xgb.XGBRegressor(); model.load_model(MODEL_FILE)
-    with open(FEATURES_FILE, 'r') as f: features = json.load(f)
-    return model, features
-
 def _safe_division(n, d): return n / d if d else 0
 def find_nearest_node(graph: nx.Graph, point: Point):
     return min(graph.nodes, key=lambda node: point.distance(Point(graph.nodes[node]['pos'][1], graph.nodes[node]['pos'][0])))
 
+# --- L1: DATA & MODELING LAYER ---
 class DataFusionFabric:
     def __init__(self, config: Dict):
         self.config = config.get('data', {}); self.hospitals = {name: {'location': Point(data['location'][1], data['location'][0]), 'capacity': data['capacity'], 'load': data['load']} for name, data in self.config.get('hospitals', {}).items()}; self.ambulances = {name: {'location': Point(data['location'][1], data['location'][0]), 'status': data['status']} for name, data in self.config.get('ambulances', {}).items()}; self.zones = {name: {**data, 'polygon': Polygon([(p[1], p[0]) for p in data['polygon']])} for name, data in self.config.get('zones', {}).items()}; self.patient_vitals = self.config.get('patient_vitals', {}); self.road_graph = self._build_road_graph(self.config.get('road_network', {})); self.city_boundary = Polygon([(p[1], p[0]) for p in self.config.get('city_boundary', [])])
@@ -129,8 +92,20 @@ class DataFusionFabric:
         return state
 
 class CognitiveEngine:
-    def __init__(self, data_fabric: DataFusionFabric):
-        self.data_fabric = data_fabric; self.demand_model, self.model_features = load_demand_model()
+    def __init__(self, data_fabric: DataFusionFabric, model_config: Dict):
+        self.data_fabric = data_fabric
+        self.demand_model, self.model_features = self._train_demand_model(model_config)
+
+    def _train_demand_model(self, model_config: Dict):
+        print("--- Entrenando modelo de demanda (ejecutado una sola vez gracias a @st.cache_resource) ---")
+        model_params = model_config.get('data', {}).get('model_params', {})
+        hours = 24 * 365; timestamps = pd.to_datetime(pd.date_range(start='2023-01-01', periods=hours, freq='h'))
+        X_train = pd.DataFrame({'hour': timestamps.hour, 'day_of_week': timestamps.dayofweek, 'is_quincena': timestamps.day.isin([14,15,16,29,30,31,1]), 'temperature': np.random.normal(22, 5, hours), 'border_wait': np.random.randint(20, 120, hours)})
+        y_train = np.maximum(0, 5 + 3 * np.sin(X_train['hour'] * 2 * np.pi / 24) + X_train['is_quincena'] * 5 + X_train['border_wait']/20 + np.random.randn(hours)).astype(int)
+        model = xgb.XGBRegressor(objective='reg:squarederror', **model_params, random_state=42, n_jobs=-1)
+        model.fit(X_train, y_train)
+        return model, list(X_train.columns)
+
     def predict_citywide_demand(self, features: Dict) -> float:
         input_df = pd.DataFrame([features], columns=self.model_features); return max(0, self.demand_model.predict(input_df)[0])
     def calculate_risk_scores(self, live_state: Dict) -> Dict:
@@ -163,6 +138,7 @@ class CognitiveEngine:
         if not options: return {"error": "No se pudieron calcular rutas a hospitales."}
         best_option = min(options, key=lambda x: x.get('total_score', float('inf'))); path_coords = [[self.data_fabric.road_graph.nodes[node]['pos'][1], self.data_fabric.road_graph.nodes[node]['pos'][0]] for node in best_option['path_nodes']]; return {"ambulance_unit": ambulance_unit, "best_hospital": best_option.get('hospital'), "routing_analysis": pd.DataFrame(options).drop(columns=['path_nodes']).sort_values('total_score').reset_index(drop=True), "route_path_coords": path_coords}
 
+# --- L2: PRESENTATION LAYER (Unchanged) ---
 def kpi_card(icon: str, title: str, value: Any, color: str):
     st.markdown(f"""<div style="background-color: #262730; border: 1px solid #444; border-radius: 10px; padding: 20px; text-align: center; height: 100%;"><div style="font-size: 40px;">{icon}</div><div style="font-size: 16px; color: #bbb; margin-top: 10px; text-transform: uppercase; font-weight: 600;">{title}</div><div style="font-size: 28px; font-weight: bold; color: {color};">{value}</div></div>""", unsafe_allow_html=True)
 def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_config):
@@ -194,12 +170,32 @@ def display_ai_rationale(route_info: Dict):
         if not reasons: reasons.append("fue un cercano segundo lugar, pero menos óptimo en general")
         st.error(f"**Alternativa Rechazada:** `{rejected.get('hospital', 'N/A')}` debido a {', '.join(reasons)}.", icon="❌")
 
+# ##################################################################
+# ###############      THE ROBUST SOLUTION         ###############
+# ##################################################################
+@st.cache_resource
+def get_engine():
+    """
+    This function is called only ONCE per application lifetime.
+    It creates the expensive, stateful objects (data fabric, AI model).
+    Streamlit's cache stores the returned 'engine' object in memory.
+    """
+    with st.spinner("Inicializando el motor de IA por primera vez..."):
+        app_config = get_app_config()
+        data_fabric = DataFusionFabric(app_config)
+        # The CognitiveEngine now trains its own model on initialization
+        engine = CognitiveEngine(data_fabric, app_config)
+        return engine
+# ##################################################################
+
 def main():
     st.set_page_config(page_title="RedShield AI: Comando Élite", layout="wide", initial_sidebar_state="expanded")
-    config = get_app_config()
-    if 'engine' not in st.session_state:
-        st.session_state.engine = CognitiveEngine(DataFusionFabric(config))
-    engine = st.session_state.engine; data_fabric = engine.data_fabric
+    
+    # Get the singleton engine instance. The first time, it will be created and cached.
+    # On all subsequent runs, it will be instantly retrieved from memory.
+    engine = get_engine()
+    data_fabric = engine.data_fabric
+    
     live_state = data_fabric.get_live_state(); risk_scores = engine.calculate_risk_scores(live_state); all_incidents = live_state.get("city_incidents", {}).get("active_incidents", [])
     incident_dict = {i['id']: i for i in all_incidents}
 
@@ -249,6 +245,7 @@ def main():
             st.subheader("Mapa de Operaciones de la Ciudad")
             with st.expander("Mostrar Leyenda del Mapa", expanded=True):
                 st.markdown("""**Iconos:**<br>- 🚑 **Ambulancia (Grande, Brillante):** Disponible para despacho.<br>- 🚑 **Ambulancia (Pequeña, Gris):** Actualmente en una misión.<br>- 🏥 **Hospital (Verde <70%):** Aceptando pacientes, carga baja.<br>- 🏥 **Hospital (Naranja <90%):** Carga alta, usar con precaución.<br>- 🏥 **Hospital (Rojo >=90%):** Carga crítica, evitar si es posible.<br>- 🚨 **Círculo Pulsante:** Ubicación de una emergencia activa.<br><br>**Análisis de Zona:**<br>- **Color (Intensidad de Rojo):** Mapa de calor de la densidad de incidentes. Un rojo más intenso significa más incidentes en esa área.<br>- **Elevación (Altura):** Puntaje de riesgo compuesto por tráfico, crimen y calidad de las vías. Las zonas más altas son más riesgosas para transitar.""", unsafe_allow_html=True)
+            config = get_app_config()
             zones_gdf, hosp_df, amb_df, inc_df, heat_df = prepare_visualization_data(data_fabric, risk_scores, all_incidents, config.get('styling', {}))
             deck = create_deck_gl_map(zones_gdf, hosp_df, amb_df, inc_df, heat_df, st.session_state.get('route_info'), config.get('styling', {}))
             st.pydeck_chart(deck, use_container_width=True)
