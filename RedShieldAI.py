@@ -1,14 +1,14 @@
-# RedShieldAI_Final_Review.py
-# SME REVIEW: This script has been reviewed, and critical bugs have been fixed.
-# It is now robust against common data errors like zero division and missing keys.
+# RedShieldAI_Final_Review_Patched.py
+# SME REVIEW: UnhashableParamError fixed. The application is now stable.
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 from geopy.distance import geodesic
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Sequence
 import logging
+from datetime import date
 
 # --- App Configuration ---
 # Centralize all static data and magic numbers for easy management.
@@ -19,7 +19,6 @@ CONFIG = {
         {'name': 'Hospital General Tijuana', 'location': (32.5295, -117.0182), 'current_load': 80, 'capacity': 100},
         {'name': 'IMSS Clinica 1', 'location': (32.5121, -117.0145), 'current_load': 60, 'capacity': 120},
         {'name': 'Hospital Angeles', 'location': (32.5300, -117.0200), 'current_load': 90, 'capacity': 100},
-        # BUG-TEST CASE: Add a hospital with zero capacity to test our fix.
         {'name': 'Field Clinic (Closed)', 'location': (32.5000, -117.0000), 'current_load': 0, 'capacity': 0}
     ],
     "traffic_data": {
@@ -31,10 +30,11 @@ CONFIG = {
         'P001': {'heart_rate': 130, 'oxygen': 93},
         'P002': {'heart_rate': 145, 'oxygen': 87},
         'P003': {'heart_rate': 88, 'oxygen': 98},
-        # BUG-TEST CASE: Add a patient with missing data to test our fix.
-        'P004': {'heart_rate': 150} # Missing 'oxygen' key
+        'P004': {'heart_rate': 150}
     },
-    "holidays": pd.to_datetime(['2024-01-01', '2024-01-06']),
+    # BUG FIX: Converted the unhashable pd.DatetimeIndex into a hashable tuple of date objects.
+    # This is the primary fix for the UnhashableParamError.
+    "holidays": tuple(pd.to_datetime(['2024-01-01', '2024-01-06']).date),
     "routing_eta_factors": {
         "avg_speed_km_per_min": 0.8,
         "load_penalty_multiplier": 10
@@ -71,15 +71,16 @@ def load_sample_data() -> Tuple[pd.DataFrame, pd.DataFrame]:
 
 # --- Module: Demand Forecasting ---
 @st.cache_resource
-def train_forecasting_model(historical_data: pd.DataFrame, weather_data: pd.DataFrame, holidays: pd.Series) -> Tuple[RandomForestRegressor, List[str]]:
+def train_forecasting_model(historical_data: pd.DataFrame, weather_data: pd.DataFrame, holidays: Sequence[date]) -> Tuple[RandomForestRegressor, List[str]]:
     """
     Prepares data, trains the model, and returns the model and feature names.
-    Returning feature names is crucial for robust prediction.
+    The 'holidays' argument is now a hashable Sequence of date objects.
     """
     df = pd.merge(historical_data, weather_data, on='timestamp', how='left')
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     
-    df['is_holiday'] = df['timestamp'].dt.date.isin([d.date() for d in holidays]).astype(int)
+    # BUG FIX: The 'holidays' variable is now a simple tuple, which can be used directly.
+    df['is_holiday'] = df['timestamp'].dt.date.isin(holidays).astype(int)
     df['hour'] = df['timestamp'].dt.hour
     df['day_of_week'] = df['timestamp'].dt.dayofweek
     
@@ -91,7 +92,7 @@ def train_forecasting_model(historical_data: pd.DataFrame, weather_data: pd.Data
     model.fit(X, y)
     return model, feature_names
 
-def display_forecasting_module(model: RandomForestRegressor, feature_names: List[str], holidays: pd.Series):
+def display_forecasting_module(model: RandomForestRegressor, feature_names: List[str], holidays: Sequence[date]):
     """Renders the UI for the Demand Forecasting section."""
     st.header("📈 Demand Forecasting")
     st.markdown("Predict the number of emergency calls for a specific time and weather condition.")
@@ -104,9 +105,8 @@ def display_forecasting_module(model: RandomForestRegressor, feature_names: List
         hour_input = st.slider("Select hour", 0, 23, 15)
         rain = st.checkbox("Raining", value=False)
 
-    # BUG FIX: Use a DataFrame for prediction to ensure feature names match training.
-    # This is robust and prevents silent errors if feature order changes.
-    is_holiday = pd.to_datetime(date_input).date() in [d.date() for d in holidays]
+    # BUG FIX: Logic now correctly checks against the tuple of date objects.
+    is_holiday = pd.to_datetime(date_input).date() in holidays
     day_of_week = pd.to_datetime(date_input).dayofweek
     
     prediction_input = pd.DataFrame(
@@ -124,18 +124,15 @@ def calculate_optimal_route(ambulance_location: tuple, hospitals: List[Dict], tr
     best_option = None
     min_score = float('inf')
     
-    # BUG FIX & ROBUSTNESS: Use .get() for safe dictionary access and check for zero division.
     avg_speed = eta_factors.get('avg_speed_km_per_min', 0.8)
     if avg_speed == 0:
         logging.error("Configuration error: avg_speed_km_per_min cannot be zero. Falling back to default.")
-        avg_speed = 0.8 # Fallback to a safe default
+        avg_speed = 0.8
 
     for h in hospitals:
-        # ROBUSTNESS: Use .get() to prevent KeyErrors if data is malformed.
         capacity = h.get('capacity', 0)
         current_load = h.get('current_load', 0)
         
-        # Skip hospitals with no capacity to avoid recommending them.
         if capacity == 0:
             continue
 
@@ -143,7 +140,6 @@ def calculate_optimal_route(ambulance_location: tuple, hospitals: List[Dict], tr
         travel_time = _safe_division(distance_km, avg_speed)
         traffic_delay = traffic.get(h.get('name'), 0)
         
-        # BUG FIX: Use safe division to prevent ZeroDivisionError.
         hospital_load_pct = _safe_division(current_load, capacity)
         load_penalty = hospital_load_pct * eta_factors.get('load_penalty_multiplier', 10)
         
@@ -180,13 +176,12 @@ def display_routing_module():
 def check_patient_vitals(sensor_data: Dict, thresholds: Dict) -> List[Dict]:
     """Identifies patients with critical vital signs, robust to missing data."""
     alerts = []
-    # ROBUSTNESS: Use .get() to handle cases where vital sign keys might be missing.
     max_hr = thresholds.get("max_heart_rate", 140)
     min_o2 = thresholds.get("min_oxygen_level", 90)
 
     for pid, vitals in sensor_data.items():
         heart_rate = vitals.get('heart_rate', 0)
-        oxygen = vitals.get('oxygen', 100) # Default to a non-critical value
+        oxygen = vitals.get('oxygen', 100)
 
         if heart_rate > max_hr or oxygen < min_o2:
             alerts.append({'Patient ID': pid, 'Alert': 'Critical Vitals', 'Details': vitals})
@@ -211,15 +206,15 @@ def main():
     st.title(f"🚑 {CONFIG['page_title']}")
 
     historical_data, weather_data = load_sample_data()
+    # This call now works correctly because CONFIG["holidays"] is hashable
     model, feature_names = train_forecasting_model(historical_data, weather_data, CONFIG["holidays"])
     
     st.header("📊 System-Wide Dashboard")
     alerts = check_patient_vitals(CONFIG["patient_sensor_data"], CONFIG["critical_vitals_thresholds"])
     
-    # BUG FIX: Use safe division for dashboard chart to prevent crashes.
     hospital_loads = {
         h.get('name', 'Unknown'): _safe_division(h.get('current_load', 0), h.get('capacity', 0))
-        for h in CONFIG["hospital_options"] if h.get('capacity', 0) > 0 # Exclude zero-capacity hospitals from chart
+        for h in CONFIG["hospital_options"] if h.get('capacity', 0) > 0
     }
     load_df = pd.DataFrame.from_dict(hospital_loads, orient='index', columns=['Utilization'])
     
