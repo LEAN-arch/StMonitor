@@ -1,5 +1,12 @@
-streamlit 
-scikit-learn 
-pandas 
-numpy 
-geopy
+# Core Streamlit and data manipulation
+streamlit
+pandas
+numpy
+
+# Geospatial libraries
+geopandas
+pydeck
+shapely
+
+# Optional but good practice for numerical operations
+scikit-learn
