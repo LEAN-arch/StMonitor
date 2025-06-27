@@ -1,131 +1,188 @@
-# RedShieldAI_Cognitive_Engine_FIXED.py
-# SME LEVEL: A robust, bug-free, and production-quality prototype of the 
-# self-correcting, prescriptive digital twin architecture.
+# RedShieldAI_Operational_Twin.py
+# SME LEVEL: A fully integrated command & control platform with multi-layer geospatial
+# visualization and a tangible risk-aware routing engine.
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import random
+import geopandas as gpd
+from shapely.geometry import Point, Polygon, LineString
+import pydeck as pdk
 from datetime import datetime
 from typing import Dict, List, Any
 
-# --- L1: DATA FUSION FABRIC (SIMULATED & ROBUST) ---
+# --- L1: GEOSPATIALLY-AWARE DATA FABRIC ---
 class DataFusionFabric:
-    """
-    Simulates real-time data ingestion from various city sources.
-    In production, this class would manage connections to databases, Kafka, and APIs.
-    """
+    """Manages all data, now with rich geospatial context."""
     def __init__(self):
         self.static_zonal_data = {
-            "Zona Río": {"crime_index": 0.7, "road_quality": 0.9, "base_demand": 5.0},
-            "Otay": {"crime_index": 0.5, "road_quality": 0.7, "base_demand": 7.0},
-            "Playas": {"crime_index": 0.4, "road_quality": 0.8, "base_demand": 3.0}
+            "Zona Río": {"polygon": Polygon([(32.52, -117.01), (32.53, -117.01), (32.53, -117.03), (32.52, -117.03)]), "crime": 0.7, "road_quality": 0.9, "base_demand": 5.0},
+            "Otay": {"polygon": Polygon([(32.53, -116.95), (32.54, -116.95), (32.54, -116.98), (32.53, -116.98)]), "crime": 0.5, "road_quality": 0.7, "base_demand": 7.0},
+            "Playas": {"polygon": Polygon([(32.51, -117.11), (32.53, -117.11), (32.53, -117.13), (32.51, -117.13)]), "crime": 0.4, "road_quality": 0.8, "base_demand": 3.0}
+        }
+        self.hospitals = {
+            "Hospital General": {"location": Point(32.5295, -117.0182), "capacity": 100, "load": 85},
+            "IMSS Clínica 1": {"location": Point(32.5121, -117.0145), "capacity": 120, "load": 70},
+            "Hospital Angeles": {"location": Point(32.5300, -117.0200), "capacity": 100, "load": 95}
+        }
+        self.ambulances = {
+            "A01": {"location": Point(32.515, -117.04), "status": "Available"},
+            "A02": {"location": Point(32.535, -116.96), "status": "Available"},
+            "A03": {"location": Point(32.52, -117.12), "status": "On Mission"}
         }
 
-    # ROBUSTNESS: Cached to provide a stable state that doesn't change on every widget interaction.
-    @st.cache_data(ttl=300) # Cache live data for 5 minutes
-    def get_live_state(_self) -> Dict[str, Dict[str, Any]]:
-        """
-        Simulates fetching a real-time snapshot of the city.
-        The simulation is now time-dependent for realism.
-        """
-        hour = datetime.now().hour
-        # Simulate higher traffic during rush hour and evening
-        is_rush_hour = 7 <= hour <= 9 or 16 <= hour <= 19
-        is_evening = 19 < hour <= 23
-
-        live_state = {}
+    @st.cache_data(ttl=300)
+    def get_live_state(_self) -> Dict:
+        """Simulates fetching real-time data, now including incident locations."""
+        state = {}
         for zone, data in _self.static_zonal_data.items():
-            base_traffic = data.get('crime_index', 0.5) # Base traffic related to zone character
-            traffic_multiplier = 1.0
-            if is_rush_hour: traffic_multiplier = 1.5
-            if is_evening and zone == "Zona Río": traffic_multiplier = 1.8 # Evening rush
+            incidents = []
+            num_incidents = np.random.randint(0, 3)
+            for i in range(num_incidents):
+                minx, miny, maxx, maxy = data['polygon'].bounds
+                incident_point = Point(np.random.uniform(minx, maxx), np.random.uniform(miny, maxy))
+                incidents.append({"id": f"I-{zone[:2]}{i}", "location": incident_point})
 
-            live_state[zone] = {
-                "traffic": min(1.0, base_traffic * traffic_multiplier + np.random.uniform(-0.1, 0.1)),
-                "active_incidents": random.randint(0, int(data.get('base_demand', 5) / 3)),
-                "event_multiplier": 3.0 if is_evening and zone == "Zona Río" else 1.0,
+            state[zone] = {
+                "traffic": np.random.uniform(0.3, 1.0),
+                "active_incidents": incidents,
             }
-        return live_state
+        return state
 
-    def get_incident_outcome(self, incident_id: str) -> Dict[str, Any]:
-        """Simulates fetching outcome data after an incident is resolved."""
-        return {
-            "incident_id": incident_id,
-            "predicted_eta_min": 12.0,
-            "actual_eta_min": 15.5, # The model was too optimistic
-            "patient_stability_degradation": 0.2, # Patient worsened
-            "zone": "Zona Río"
-        }
-
-# --- L2: DIGITAL TWIN CORE (COGNITIVE ENGINE) ---
+# --- L2: COGNITIVE ENGINE WITH ROUTING LOGIC ---
 class DigitalTwinCore:
-    """
-    The 'brain' of the system. It uses models to predict, plan, and learn.
-    """
     def __init__(self, data_fabric: DataFusionFabric):
-        # BUG FIX: Use dependency injection. The engine now uses the one true data_fabric instance.
         self.data_fabric = data_fabric
-        # These would be complex, pre-trained models. We simulate their logic.
-        self.probabilistic_demand_model = "LoadedModel_GNN"
-        self.causal_friction_model = "LoadedModel_Causal"
-        self.rl_dispatch_agent = "LoadedModel_RL"
         self.model_confidence = 0.95
 
-    def run_analysis(self, live_state: Dict[str, Any], available_ambulances: int) -> Dict[str, Any]:
-        """Runs the full cognitive pipeline: predict, plan, and package results."""
-        with st.spinner("Cognitive Engine processing..."):
-            demand_dist = self._predict_demand_distribution(live_state)
-            dispatch_plan = self._get_optimal_dispatch_plan(live_state, available_ambulances, demand_dist)
-        return {"demand_distribution": demand_dist, "dispatch_plan": dispatch_plan}
+    def _calculate_risk_scores(self, live_state: Dict) -> Dict:
+        """Calculates a dynamic risk score for each zone."""
+        risk_scores = {}
+        for zone, s_data in self.data_fabric.static_zonal_data.items():
+            l_data = live_state.get(zone, {})
+            risk = (l_data.get('traffic', 0.5) * 0.6 + 
+                    (1 - s_data.get('road_quality', 0.5)) * 0.2 + 
+                    s_data.get('crime', 0.5) * 0.2)
+            risk_scores[zone] = risk * (1 + len(l_data.get('active_incidents', [])))
+        return risk_scores
 
-    def _predict_demand_distribution(self, live_state: Dict[str, Any]) -> Dict[str, Dict[str, float]]:
-        """Predicts a probability distribution of calls per zone, capturing uncertainty."""
-        predictions = {}
-        for zone, state in live_state.items():
-            # ROBUSTNESS: Use .get() with defaults for all dictionary access.
-            base_demand = self.data_fabric.static_zonal_data.get(zone, {}).get('base_demand', 0)
-            traffic = state.get('traffic', 0)
-            event_mult = state.get('event_multiplier', 1)
-            incidents = state.get('active_incidents', 0)
+    def find_best_route_for_incident(self, incident: Dict, risk_gdf: gpd.GeoDataFrame) -> Dict:
+        """
+        Calculates the optimal hospital destination for a given incident by evaluating a composite cost function.
+        This is the core of the risk-aware routing.
+        """
+        # 1. Find the closest available ambulance
+        available_ambulances = {k: v for k, v in self.data_fabric.ambulances.items() if v['status'] == 'Available'}
+        if not available_ambulances: return {"error": "No available ambulances."}
+
+        ambulance_unit, amb_data = min(available_ambulances.items(), 
+                                       key=lambda item: incident['location'].distance(item[1]['location']))
+
+        # 2. Evaluate each hospital as a potential destination
+        options = []
+        for name, h_data in self.data_fabric.hospitals.items():
+            # A. Calculate base ETA (proportional to distance)
+            distance = amb_data['location'].distance(h_data['location']) * 111 # Approx deg to km
+            base_eta = distance * 1.5 # 1.5 min per km average
             
-            mean_calls = base_demand * (1 + traffic) * event_mult + incidents
-            # Higher confidence -> lower uncertainty (std dev)
-            std_dev = mean_calls * (1.1 - self.model_confidence)
-            predictions[zone] = {"mean": mean_calls, "std_dev": max(0.1, std_dev)}
-        return predictions
+            # B. Calculate Path Risk Cost
+            # We simulate this by sampling points on the route and summing their zone's risk.
+            path = LineString([amb_data['location'], h_data['location']])
+            path_risk = 0
+            num_samples = 10
+            for i in range(num_samples + 1):
+                point_on_path = path.interpolate(i / num_samples, normalized=True)
+                # Find which zone the point is in
+                zone_row = risk_gdf[risk_gdf.contains(point_on_path)]
+                if not zone_row.empty:
+                    path_risk += zone_row.iloc[0]['risk']
+            
+            # C. Calculate Hospital Load Penalty
+            load_penalty = (h_data['load'] / h_data['capacity'])**2 * 20 # Exponential penalty for high load
 
-    def _get_optimal_dispatch_plan(self, live_state: Dict, available_ambulances: int, demand_dist: Dict) -> Dict:
-        """Uses a simulated RL agent to create a strategic resource allocation plan."""
-        # RL agent would consider demand, risk, available units, etc.
-        highest_demand_zone = max(demand_dist, key=lambda z: demand_dist[z].get('mean', 0))
+            # D. Total Composite Score
+            total_score = base_eta * 0.5 + path_risk * 0.3 + load_penalty * 0.2
+            options.append({
+                "hospital": name, "eta_min": base_eta, "path_risk_cost": path_risk,
+                "load_penalty": load_penalty, "total_score": total_score
+            })
+
+        if not options: return {"error": "No valid hospital options."}
+        
+        best_option = min(options, key=lambda x: x['total_score'])
         return {
-            "system_recommendation": "Pre-positioning and strategic response",
-            "actions": [
-                {"action": "PRE_POSITION", "unit": "A03", "target_zone": highest_demand_zone, "reason": "Anticipated high demand"},
-                {"action": "HOLD_IN_RESERVE", "unit": "A04", "reason": "Coverage for unexpected major incidents"},
-                {"action": "RESPOND", "unit": "A01", "incident_id": "I-123", "zone": "Zona Río"},
-            ]
+            "ambulance_unit": ambulance_unit,
+            "ambulance_location": amb_data['location'],
+            "incident_location": incident['location'],
+            "best_hospital": best_option['hospital'],
+            "hospital_location": self.data_fabric.hospitals[best_option['hospital']]['location'],
+            "routing_analysis": pd.DataFrame(options).sort_values('total_score').reset_index(drop=True)
         }
 
-    def learn_from_outcome(self, outcome: Dict[str, Any]):
-        """Continual learning loop. Updates models based on real-world feedback."""
-        eta_mismatch = outcome.get('actual_eta_min', 0) - outcome.get('predicted_eta_min', 0)
-        zone = outcome.get('zone', 'Unknown')
-        
-        if abs(eta_mismatch) > 1:
-            st.warning(f"LEARNING: Significant ETA error of {eta_mismatch:.1f} min in {zone}. Updating friction model.")
-            # In reality: self.causal_friction_model.partial_fit(new_data)
-        
-        self.model_confidence = max(0.5, self.model_confidence - abs(eta_mismatch) * 0.01)
-        st.info(f"System model confidence adjusted to: {self.model_confidence:.2%}")
+# --- L3: VISUALIZATION & UI ---
+def create_deck_gl_map(zones_gdf, hospitals, ambulances, incidents, route_info=None):
+    """Creates a rich, multi-layered PyDeck map."""
+    # Define icon data
+    ICON_MAPPING = {
+        "hospital": {"url": "https://img.icons8.com/color/48/hospital-3.png", "width": 256, "height": 256, "anchorY": 256},
+        "ambulance": {"url": "https://img.icons8.com/officel/48/ambulance.png", "width": 256, "height": 256, "anchorY": 256},
+        "incident": {"url": "https://img.icons8.com/ios-filled/50/FA5252/error.png", "width": 256, "height": 256, "anchorY": 256},
+    }
+    
+    # Create layers
+    zone_layer = pdk.Layer(
+        "PolygonLayer",
+        data=zones_gdf,
+        get_polygon="geometry",
+        filled=True,
+        stroked=True,
+        get_fill_color="fill_color",
+        get_line_color=[255, 255, 255],
+        get_line_width=100,
+        opacity=0.2,
+        pickable=True,
+        auto_highlight=True,
+    )
 
-# --- MAIN APPLICATION LOGIC ---
+    hospital_layer = pdk.Layer(
+        "IconLayer",
+        data=pd.DataFrame(hospitals.values()),
+        get_icon="hospital",
+        get_position='[lon, lat]',
+        get_size=40,
+        size_scale=1,
+        icon_atlas=ICON_MAPPING['hospital']['url'],
+        icon_mapping=ICON_MAPPING,
+        pickable=True,
+    )
+    
+    # Convert points to lon, lat for pydeck
+    for data in [hospitals, ambulances]:
+        for item in data.values(): item.update({'lon': item['location'].x, 'lat': item['location'].y})
+    for incident in incidents: incident.update({'lon': incident['location'].x, 'lat': incident['location'].y})
+
+    ambulance_layer = pdk.Layer("IconLayer", data=pd.DataFrame(ambulances.values()), get_icon="ambulance", get_position='[lon, lat]', get_size=35, size_scale=1, icon_atlas=ICON_MAPPING['ambulance']['url'], icon_mapping=ICON_MAPPING)
+    incident_layer = pdk.Layer("IconLayer", data=pd.DataFrame(incidents), get_icon="incident", get_position='[lon, lat]', get_size=30, size_scale=1, icon_atlas=ICON_MAPPING['incident']['url'], icon_mapping=ICON_MAPPING)
+    
+    layers = [zone_layer, hospital_layer, ambulance_layer, incident_layer]
+    
+    # Add route layer if a route has been calculated
+    if route_info and "error" not in route_info:
+        route_path = LineString([route_info['ambulance_location'], route_info['hospital_location']])
+        route_df = pd.DataFrame([{'path': [list(p) for p in route_path.coords]}])
+        route_layer = pdk.Layer('PathLayer', data=route_df, get_path='path', get_width=5, get_color=[251, 192, 45], width_scale=1, width_min_pixels=5)
+        layers.append(route_layer)
+        
+    # Set initial view
+    view_state = pdk.ViewState(latitude=32.525, longitude=-117.02, zoom=11.5, bearing=0, pitch=45)
+    
+    return pdk.Deck(layers=layers, initial_view_state=view_state, map_style='mapbox://styles/mapbox/dark-v9', tooltip={"text": "{name}\nRisk: {risk:.2f}"})
+
 def main():
-    st.set_page_config(page_title="RedShield AI: Cognitive Engine", layout="wide")
-    st.title("🧠 RedShield AI: Sentient Digital Twin (Operational Prototype)")
+    st.set_page_config(page_title="RedShield AI: Operational Twin", layout="wide")
+    st.title("🚑 RedShield AI: Operational Digital Twin")
 
-    # --- Initialize Singleton Instances in Session State ---
+    # --- Initialize Singletons ---
     if 'data_fabric' not in st.session_state:
         st.session_state.data_fabric = DataFusionFabric()
     if 'cognitive_engine' not in st.session_state:
@@ -133,66 +190,59 @@ def main():
 
     data_fabric = st.session_state.data_fabric
     cognitive_engine = st.session_state.cognitive_engine
+    
+    # --- Get Live Data and Calculate Risk ---
+    if st.sidebar.button("Force Refresh Live Data"):
+        data_fabric.get_live_state.clear()
+    live_state = data_fabric.get_live_state()
+    risk_scores = cognitive_engine._calculate_risk_scores(live_state)
+    
+    # --- Prepare Data for Map ---
+    all_incidents = [inc for zone_data in live_state.values() for inc in zone_data['active_incidents']]
+    
+    # Create master GeoDataFrame
+    zones_gdf = gpd.GeoDataFrame.from_dict(data_fabric.static_zonal_data, orient='index')
+    zones_gdf = zones_gdf.set_geometry('polygon')
+    zones_gdf['name'] = zones_gdf.index
+    zones_gdf['risk'] = zones_gdf.index.map(risk_scores)
+    max_risk = zones_gdf['risk'].max()
+    zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [255, int(255 * (1 - r / max_risk)), 0, 140]).tolist()
 
-    # --- UI Tabs ---
-    tab1, tab2, tab3 = st.tabs(["Strategic Dashboard", "Simulation & Counterfactuals", "System Learning"])
+    # --- UI Layout ---
+    st.sidebar.subheader("Live Incidents")
+    if not all_incidents:
+        st.sidebar.info("No active incidents.")
+        st.session_state.selected_incident = None
+    else:
+        # Create a dropdown to select an incident to respond to
+        incident_ids = [inc['id'] for inc in all_incidents]
+        selected_id = st.sidebar.selectbox("Select Incident to Route:", incident_ids)
+        st.session_state.selected_incident = next((inc for inc in all_incidents if inc['id'] == selected_id), None)
 
-    with tab1:
-        st.header("Real-Time Cognitive Dashboard")
-        if st.button("Force Refresh Live Data"):
-            # BUG FIX: Correct way to force a refresh on a cached function.
-            data_fabric.get_live_state.clear()
-        
-        # BUG FIX: Unified logic flow. Get state, then run analysis.
-        live_state = data_fabric.get_live_state()
-        analysis_results = cognitive_engine.run_analysis(live_state, available_ambulances=5)
-        demand_dist = analysis_results["demand_distribution"]
-        dispatch_plan = analysis_results["dispatch_plan"]
+    col1, col2 = st.columns((2, 1))
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("Probabilistic Demand Forecast")
-            for zone, dist in demand_dist.items():
-                st.metric(
-                    label=f"Predicted Calls in {zone}",
-                    value=f"{dist.get('mean', 0):.1f}",
-                    delta=f"± {1.96 * dist.get('std_dev', 0):.1f} (95% CI)",
-                    delta_color="off"
-                )
-        with col2:
-            st.subheader("Prescriptive Dispatch Plan")
-            st.success(f"**{dispatch_plan.get('system_recommendation')}**")
-            st.json(dispatch_plan.get('actions', []))
+    with col1:
+        st.subheader("Operational Map")
+        route_info = None
+        if st.session_state.get('selected_incident'):
+            with st.spinner("Calculating optimal risk-aware route..."):
+                route_info = cognitive_engine.find_best_route_for_incident(st.session_state.selected_incident, zones_gdf)
+        
+        deck_map = create_deck_gl_map(zones_gdf, data_fabric.hospitals, data_fabric.ambulances, all_incidents, route_info)
+        st.pydeck_chart(deck_map)
 
-    with tab2:
-        st.header("Simulation: Counterfactual Analysis")
-        st.markdown("Ask 'What-If' questions to test system resilience.")
-        
-        sim_traffic_increase = st.slider("Simulate Traffic Spike in Zona Río", 0.0, 0.5, 0.2)
-        
-        # Create a safe, deep copy for simulation
-        simulated_state = {k: v.copy() for k, v in data_fabric.get_live_state().items()}
-        simulated_state["Zona Río"]["traffic"] = min(1.0, simulated_state["Zona Río"].get('traffic', 0) + sim_traffic_increase)
-        
-        st.warning("Running simulation with modified state...")
-        sim_results = cognitive_engine.run_analysis(simulated_state, available_ambulances=5)
-        
-        st.subheader("Simulated Outcome")
-        st.metric("Predicted Calls in Zona Río (Simulated)", f"{sim_results['demand_distribution']['Zona Río']['mean']:.1f}")
-        st.json({"New Dispatch Plan": sim_results['dispatch_plan'].get('actions', [])})
-
-    with tab3:
-        st.header("Feedback & Continual Learning")
-        st.info("This demonstrates how the system self-corrects after an incident.")
-        
-        if st.button("Simulate Resolution of Incident 'I-123'"):
-            with st.spinner("Processing incident outcome..."):
-                outcome_data = data_fabric.get_incident_outcome("I-123")
-                st.subheader("Received Outcome Data for Incident I-123")
-                st.json(outcome_data)
-                
-                cognitive_engine.learn_from_outcome(outcome_data)
-            st.success("Cognitive engine has processed the feedback and updated its internal models.")
-
+    with col2:
+        st.subheader("Routing Decision Engine")
+        if not st.session_state.get('selected_incident'):
+            st.info("Select an incident from the sidebar to see the routing plan.")
+        elif route_info and "error" not in route_info:
+            st.success(f"**Dispatch Plan for Incident {st.session_state.selected_incident['id']}**")
+            st.metric("Recommended Unit", route_info['ambulance_unit'])
+            st.metric("Optimal Destination", route_info['best_hospital'])
+            st.markdown("**Routing Analysis:**")
+            st.dataframe(route_info['routing_analysis'].set_index('hospital').style.highlight_min(axis=0, color='#006400'))
+        else:
+            st.error(route_info.get("error", "Could not calculate a route."))
+    
 if __name__ == "__main__":
     main()
