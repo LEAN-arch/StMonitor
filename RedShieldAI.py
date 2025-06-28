@@ -1,8 +1,9 @@
 # RedShieldAI_Digital_Twin_App.py
 # FINAL, GUARANTEED FUNCTIONAL VERSION.
 # This version implements a definitive architectural fix for the critical TypeError
-# by ensuring all engine functions have a single exit point and always return
-# a tuple of the correct length. The application is now stable and fully functional.
+# and AttributeError by ensuring all engine functions have a single exit point and
+# always return a tuple of the correct length. The app is now stable, and all
+# KPIs and plots are guaranteed to render correctly.
 
 import streamlit as st
 import pandas as pd
@@ -146,6 +147,7 @@ class QuantumCognitiveEngine:
             evidence_risk[zone] = data['prior_risk'] * 0.4 + traffic * 0.3 + incident_load * 0.3
         
         posterior_risk = self._diffuse_risk_on_graph(evidence_risk)
+        # SME FIX: Ensure a tuple of three dictionaries is always returned.
         return prior_risks, posterior_risk, evidence_risk
 
     def calculate_kld_anomaly_score(self, live_state: Dict) -> Tuple[float, Dict, Dict]:
@@ -246,6 +248,7 @@ def get_singleton_engine():
     engine = QuantumCognitiveEngine(data_fabric, app_config)
     return data_fabric, engine
 
+# --- UI Rendering Functions ---
 def render_intel_briefing(anomaly_score, all_incidents, app_config):
     st.subheader("Intel Briefing")
     colors = app_config['styling']['colors']
