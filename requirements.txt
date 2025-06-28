@@ -1,18 +1,35 @@
+# ===================================================================
+# Requirements for RedShield AI Command Suite
+# Pinned versions for a stable, reproducible environment.
+# Based on user-provided list and code analysis.
+#
+# Install using: pip install -r requirements.txt
+# ===================================================================
+
+# -- Core Application & Data Handling --
 streamlit==1.33.0
 pandas==2.2.2
 numpy==1.26.4
+
+# -- Geospatial Libraries --
+# Note: Geopandas has complex dependencies. These versions are compatible.
 geopandas==0.14.4
-shapely
-pydeck==0.9.0
-xgboost==2.0.3
+shapely==2.0.4
+
+# -- Network & Graph Analysis --
 networkx==3.3
-node2vec
-scikit-learn
-scipy
-torch
-pymc
+node2vec==0.4.6
+
+# -- Machine Learning & Scientific Computing --
+# scikit-learn provides the 'sklearn' module used in the code
+scikit-learn==1.4.2
+scipy==1.13.1
+torch==2.3.1
+
+# -- Bayesian Modeling --
+pymc==5.15.1
+
+# -- Visualization --
+altair==5.3.0
+pydeck==0.9.0
 matplotlib==3.8.3
-altair==5.3.0  
-pydeck
-
-
