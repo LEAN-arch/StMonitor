@@ -1,10 +1,10 @@
 # ===================================================================
-# Requirements for RedShield AI Command Suite - v3 (FIXED)
+# Requirements for RedShield AI Command Suite - v4 (FINAL)
 #
-# Fixes the following issues:
-# 1. Downgraded 'scipy' to 1.12.0 to resolve the 'triu' ImportError.
-# 2. Pinned 'rich' to 13.7.1 to resolve the conflict with streamlit==1.33.0.
-# 3. Explicitly added 'gensim' to manage its version.
+# Fixes all dependency conflicts:
+# 1. Downgraded 'networkx' to 2.8.8 to be compatible with 'node2vec'.
+# 2. Downgraded 'scipy' to 1.12.0 to resolve the 'triu' ImportError.
+# 3. Pinned 'rich' to 13.7.1 to resolve the conflict with streamlit.
 # ===================================================================
 
 # -- Core Application & Data Handling --
@@ -17,15 +17,15 @@ geopandas==0.14.4
 shapely==2.0.4
 
 # -- Network, ML & Scientific Computing --
-networkx==3.3
+networkx==2.8.8    # <-- CRITICAL FIX: Downgraded to be compatible with node2vec
 node2vec==0.4.6
 scikit-learn==1.4.2
 torch==2.3.1
-scipy==1.12.0  # <-- CRITICAL FIX: Downgraded from 1.13.1
+scipy==1.12.0      # <-- CRITICAL FIX: Downgraded for gensim compatibility
 
 # -- Hidden Dependencies (Now Managed) --
-gensim==4.3.2  # <-- CRITICAL FIX: Pinned for compatibility with scipy
-rich==13.7.1   # <-- CRITICAL FIX: Pinned for compatibility with streamlit
+gensim==4.3.2
+rich==13.7.1       # <-- CRITICAL FIX: Pinned for streamlit compatibility
 
 # -- Bayesian Modeling --
 pymc==5.15.1
