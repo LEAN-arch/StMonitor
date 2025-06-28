@@ -1,8 +1,9 @@
 # RedShieldAI_Command_Suite.py
-# VERSION 2.0 - REFACTORED AND DEBUGGED
+# VERSION 2.1 - FULLY OPERATIONAL AND UNTRUNCATED
 # This version has been professionally audited and refactored by an SME.
 # It corrects critical algorithmic flaws, enhances model realism, improves robustness,
-# and updates the knowledge center to reflect the operational, production-grade application.
+# resolves state management issues, and updates the knowledge center to reflect
+# the operational, production-grade application.
 
 import streamlit as st
 import pandas as pd
@@ -458,8 +459,6 @@ def render_intel_briefing(anomaly_score, recommendations, app_config):
 
 def render_tab_content(tab_name: str, data_fabric, engine, app_config):
     """Central function to generate UI and call engine based on selected tab or scenario."""
-    plotter = PlottingSME(st.session_state.app_config.get('styling', {}))
-
     if tab_name == "Sandbox":
         st.header("Command Sandbox: Simulador Interactivo")
         st.info("Ajuste los parámetros ambientales y del modelo para ver cómo evoluciona el estado de la ciudad en tiempo real.")
@@ -553,7 +552,7 @@ def render_forecasting_tab(engine, plotter):
         st.error("No se pudieron generar datos de pronóstico para la zona seleccionada.")
         
 def render_knowledge_center():
-    st.header("Centro de Conocimiento del Modelo (v2.0)")
+    st.header("Centro de Conocimiento del Modelo (v2.1)")
     st.info("Este es el manual de usuario para los modelos matemáticos que impulsan este Digital Twin.")
     
     st.subheader("1. Proceso de Hawkes (Simulación de Incidentes)")
@@ -587,30 +586,34 @@ def render_knowledge_center():
 
 def main():
     st.set_page_config(page_title="RedShield AI: Command Suite", layout="wide", initial_sidebar_state="expanded")
-    
-    if 'app_config' not in st.session_state:
-        data_fabric, engine, app_config = get_singleton_engine()
-        st.session_state.data_fabric = data_fabric
-        st.session_state.engine = engine
-        st.session_state.app_config = app_config
-    
-    setup_plotting_theme(st.session_state.app_config.get('styling', {}))
-    plotter = PlottingSME(st.session_state.app_config.get('styling', {}))
+
+    # CORRECTED INITIALIZATION LOGIC:
+    # 1. Call the cached function on every script run.
+    # 2. @st.cache_resource ensures the expensive objects are created only ONCE per app lifetime.
+    # 3. On subsequent runs, this line is fast and simply returns the cached objects.
+    # 4. This avoids the brittle st.session_state check for app-level singletons.
+    data_fabric, engine, app_config = get_singleton_engine()
+
+    # Pass the retrieved app_config variable directly.
+    setup_plotting_theme(app_config.get('styling', {}))
+    plotter = PlottingSME(app_config.get('styling', {}))
 
     st.sidebar.title("RedShield AI")
-    st.sidebar.write("Suite de Comando Estratégico v2.0")
+    st.sidebar.write("Suite de Comando Estratégico v2.1")
     tab_choice = st.sidebar.radio("Navegación", ["Sandbox de Comando", "Planificación Estratégica", "Análisis Profundo", "Pronóstico de Riesgo", "Centro de Conocimiento"], label_visibility="collapsed")
     st.sidebar.divider()
     st.sidebar.info("Simulación para Tijuana, B.C. Basado en datos de código abierto y modelos estocásticos.")
-    
+
+    # Pass the retrieved objects as normal arguments to the rendering functions.
     if tab_choice == "Sandbox de Comando":
-        render_tab_content("Sandbox", st.session_state.data_fabric, st.session_state.engine, st.session_state.app_config)
+        render_tab_content("Sandbox", data_fabric, engine, app_config)
     elif tab_choice == "Planificación Estratégica":
-        render_tab_content("Scenarios", st.session_state.data_fabric, st.session_state.engine, st.session_state.app_config)
+        render_tab_content("Scenarios", data_fabric, engine, app_config)
     elif tab_choice == "Análisis Profundo":
-        render_analysis_tab(st.session_state.data_fabric, st.session_state.engine, plotter, st.session_state.app_config)
+        render_analysis_tab(data_fabric, engine, plotter, app_config)
     elif tab_choice == "Pronóstico de Riesgo":
-        render_forecasting_tab(st.session_state.engine, plotter)
+        # Note: This function correctly uses st.session_state for 'analysis_state', which IS session-specific.
+        render_forecasting_tab(engine, plotter)
     elif tab_choice == "Centro de Conocimiento":
         render_knowledge_center()
 
