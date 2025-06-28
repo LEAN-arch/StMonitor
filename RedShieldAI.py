@@ -10,7 +10,7 @@ import numpy as np
 import geopandas as gpd
 from shapely.geometry import Point, Polygon
 import pydeck as pdk
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Any, Tuple
 import networkx as nx
 import os
@@ -322,7 +322,6 @@ def get_singleton_engine():
     engine = QuantumCognitiveEngine(data_fabric)
     return data_fabric, engine
 
-# --- UI Rendering Functions ---
 def render_intel_briefing(anomaly_score, all_incidents, recommendations, app_config):
     st.subheader("Intel Briefing y Recomendaciones")
     colors = app_config['styling']['colors']
