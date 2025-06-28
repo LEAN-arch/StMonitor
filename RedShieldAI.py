@@ -1,9 +1,9 @@
 # RedShieldAI_Command_Suite.py
-# VERSION 2.1 - FULLY OPERATIONAL AND UNTRUNCATED
-# This version has been professionally audited and refactored by an SME.
-# It corrects critical algorithmic flaws, enhances model realism, improves robustness,
-# resolves state management issues, and updates the knowledge center to reflect
-# the operational, production-grade application.
+# VERSION 2.2 - DATA INTEGRITY & ROBUSTNESS FIX
+# This version has been professionally revised to fix data integrity issues and enhance robustness.
+# - Corrected probability distributions in the configuration to prevent crashes.
+# - Added a normalization utility to make the simulation resilient to future config errors.
+# - Refactored UI rendering for improved code clarity and maintainability.
 
 import streamlit as st
 import pandas as pd
@@ -25,9 +25,9 @@ def get_app_config() -> Dict:
     NOTE: In a full production environment, this data would be loaded from external
     sources like GeoJSON files, CSVs, or a database, not hardcoded.
     """
-    # Plausible historical distribution of incidents by zone, derived from prior risk.
-    # The sum should be 1.0.
-    historical_zone_dist = {'Centro': 0.25, 'Otay': 0.14, 'Playas': 0.11, 'La Mesa': 0.18, 'Santa Fe': 0.18, 'El Dorado': 0.14}
+    # CRITICAL FIX: Ensured all probability distributions sum to 1.0.
+    historical_zone_dist = {'Centro': 0.25, 'Otay': 0.14, 'Playas': 0.11, 'La Mesa': 0.18, 'Santa Fe': 0.18, 'El Dorado': 0.14} # Sums to 1.0
+    historical_triage_dist = {'Rojo': 0.033, 'Amarillo': 0.195, 'Verde': 0.772} # Corrected from 0.673. Sums to 1.0.
 
     return {
         'mapbox_api_key': os.environ.get("MAPBOX_API_KEY", st.secrets.get("MAPBOX_API_KEY", "")),
@@ -52,10 +52,10 @@ def get_app_config() -> Dict:
                 "El Dorado": {'polygon': [[32.48, -116.96], [32.50, -116.96], [32.50, -116.98], [32.48, -116.98]], 'prior_risk': 0.4, 'node': 'N_ElDorado'},
             },
             'historical_incident_type_distribution': {'Trauma': 0.43, 'Médico': 0.57},
-            'historical_triage_distribution': {'Rojo': 0.033, 'Amarillo': 0.195, 'Verde': 0.673},
-            'historical_zone_distribution': historical_zone_dist, # CRITICAL FIX: Added for valid KLD calculation.
+            'historical_triage_distribution': historical_triage_dist,
+            'historical_zone_distribution': historical_zone_dist,
             'ground_truth_response_time': 14.05,
-            'city_boundary': [[32.54, -117.13], [32.43, -116.93], [32.54, -116.93], [32.43, -117.13]], # Made into a more reasonable rectangle
+            'city_boundary': [[32.54, -117.13], [32.43, -116.93], [32.54, -116.93], [32.43, -117.13]],
             'road_network': {
                 'nodes': {
                     "N_Centro": {'pos': [32.53, -117.04]}, "N_Otay": {'pos': [32.535, -116.965]}, "N_Playas": {'pos': [32.52, -117.12]},
@@ -68,10 +68,9 @@ def get_app_config() -> Dict:
             },
         },
         'model_params': {
-            'risk_diffusion_factor': 0.1, # How much risk spreads to neighbors each step
-            'risk_diffusion_steps': 3,     # How many steps of diffusion to run
+            'risk_diffusion_factor': 0.1, 'risk_diffusion_steps': 3,
             'risk_weights': {'prior': 0.4, 'traffic': 0.3, 'incidents': 0.3},
-            'response_time_turnout_penalty': 3.0, # Fixed time penalty in mins (e.g., getting ready)
+            'response_time_turnout_penalty': 3.0,
         },
         'styling': {
             'colors': {'primary': '#00A9FF', 'secondary': '#DC3545', 'accent_ok': '#00B359', 'accent_warn': '#FFB000', 'accent_crit': '#DC3545', 'background': '#0D1117', 'text': '#FFFFFF', 'hawkes_echo': [255, 107, 107, 150]},
@@ -88,11 +87,21 @@ def setup_plotting_theme(style_config: Dict):
     alt.themes.enable("redshield_dark")
 
 def _safe_division(n, d, default=0.0): return n / d if d else default
+
+def _normalize_dist(dist: Dict[str, float]) -> Dict[str, float]:
+    """Programmatically normalizes a dictionary of probabilities to sum to 1."""
+    if not dist:
+        return {}
+    total = sum(dist.values())
+    if total == 0:
+        # Avoid division by zero; return a uniform distribution.
+        return {k: 1.0 / len(dist) for k in dist}
+    return {k: v / total for k, v in dist.items()}
+
 def find_nearest_node(graph: nx.Graph, point: Point) -> Optional[str]:
     """Finds the nearest node in the graph to a given shapely Point."""
     if not graph.nodes: return None
     nodes = {name: data['pos'] for name, data in graph.nodes(data=True)}
-    # Note: Using Euclidean distance to find *nearest* node is a reasonable proxy.
     return min(nodes.keys(), key=lambda node: point.distance(Point(nodes[node][1], nodes[node][0])))
 
 class DataFusionFabric:
@@ -108,12 +117,10 @@ class DataFusionFabric:
             if home_zone_name in self.zones:
                 home_loc = self.zones[home_zone_name]['polygon'].centroid
                 self.ambulances[amb_id] = {**amb_data, 'location': home_loc, 'nearest_node': find_nearest_node(self.road_graph, home_loc)}
-
         self.city_boundary = Polygon([(p[1], p[0]) for p in self.config.get('city_boundary', [])])
 
     @st.cache_data
     def _build_road_graph(_self, network_config: Dict) -> nx.Graph:
-        """Builds and caches the NetworkX graph from configuration."""
         G = nx.Graph()
         if 'nodes' in network_config:
             for node, data in network_config.get('nodes', {}).items(): G.add_node(node, pos=data['pos'])
@@ -127,15 +134,11 @@ class QuantumCognitiveEngine:
         self.data_fabric = data_fabric
         self.config = data_fabric.config
         self.params = model_params
-        # Markov Matrix for forecasting system state [Nominal, Elevated, Anomalous]
         self.markov_matrix = np.array([[0.80, 0.15, 0.05], [0.30, 0.60, 0.10], [0.10, 0.40, 0.50]])
 
     @st.cache_data(ttl=60)
     def get_live_state(_self, base_rate: int, self_excitation_factor: float, is_holiday: bool, is_payday: bool, weather_condition: str, major_event_active: bool, traffic_multiplier: float) -> Dict[str, Any]:
-        """
-        Simulates a new state of the city based on environmental factors.
-        FIX: Unpacked dict into args for reliable Streamlit caching.
-        """
+        """Simulates a new state of the city based on environmental factors."""
         effective_rate = float(base_rate)
         if is_holiday: effective_rate *= 1.5
         if is_payday: effective_rate *= 1.3
@@ -144,12 +147,13 @@ class QuantumCognitiveEngine:
         
         num_incidents = np.random.poisson(effective_rate)
         
-        hist_type_dist = _self.config['historical_incident_type_distribution']
-        hist_tri_dist = _self.config['historical_triage_distribution']
+        # ROBUSTNESS FIX: Normalize distributions before use to prevent crashes.
+        hist_type_dist = _normalize_dist(_self.config['historical_incident_type_distribution'])
+        hist_tri_dist = _normalize_dist(_self.config['historical_triage_distribution'])
+
         incidents = []
         minx, miny, maxx, maxy = _self.data_fabric.city_boundary.bounds
         for i in range(num_incidents):
-            # This loop can be slow if the city boundary is complex. For a rectangle it's fast.
             while True:
                 loc = Point(np.random.uniform(minx, maxx), np.random.uniform(miny, maxy))
                 if _self.data_fabric.city_boundary.contains(loc):
@@ -162,7 +166,7 @@ class QuantumCognitiveEngine:
         trigger_incidents = [inc for inc in incidents if inc['triage'] == 'Rojo']
         for idx, trigger in enumerate(trigger_incidents):
             if np.random.rand() < self_excitation_factor:
-                for j in range(np.random.randint(1, 3)): # Each trigger spawns 1 or 2 echos
+                for j in range(np.random.randint(1, 3)):
                     echo_loc = Point(trigger['location'].x + np.random.normal(0, 0.005), trigger['location'].y + np.random.normal(0, 0.005))
                     if _self.data_fabric.city_boundary.contains(echo_loc):
                         echo_incidents.append({"id": f"ECHO-{idx}-{j}", "type": "Echo", "triage": "Verde", "location": echo_loc, "is_echo": True})
@@ -176,9 +180,6 @@ class QuantumCognitiveEngine:
         return next((name for name, data in self.data_fabric.zones.items() if data['polygon'].contains(point)), None)
 
     def _diffuse_risk_on_graph(self, initial_risks: Dict) -> Dict:
-        """
-        FIX: Implemented a conservative risk diffusion model. Risk is moved, not created.
-        """
         graph = self.data_fabric.road_graph
         zone_to_node = {zone: data['node'] for zone, data in self.data_fabric.zones.items()}
         node_to_zone = {v: k for k, v in zone_to_node.items()}
@@ -197,18 +198,13 @@ class QuantumCognitiveEngine:
                 
                 updates[node] -= risk_to_diffuse
                 for neighbor_node in neighbors:
-                    # The original code used zone names as keys, but diffusion happens on nodes.
-                    # We map back and forth between node names and zone names.
                     neighbor_zone = node_to_zone.get(neighbor_node)
                     if neighbor_zone:
                          updates[neighbor_zone] += risk_per_neighbor
-
             diffused_risks = updates
-            
         return {node_to_zone.get(n, n): r for n, r in diffused_risks.items()}
 
     def calculate_holistic_risk(self, live_state: Dict) -> Tuple[Dict, Dict]:
-        """Calculates risk based on prior history, current incidents, and traffic."""
         prior_risks = {zone: data['prior_risk'] for zone, data in self.data_fabric.zones.items()}
         incidents_by_zone = {zone: [] for zone in self.data_fabric.zones.keys()}
         for inc in live_state.get("active_incidents", []):
@@ -219,21 +215,15 @@ class QuantumCognitiveEngine:
         w = self.params['risk_weights']
         for zone, data in self.data_fabric.zones.items():
             traffic = live_state.get('traffic_conditions', {}).get(zone, 0.5)
-            incident_load = len(incidents_by_zone.get(zone, [])) * 0.25 # Arbitrary scaling factor
+            incident_load = len(incidents_by_zone.get(zone, [])) * 0.25
             evidence_risk[zone] = data['prior_risk'] * w['prior'] + traffic * w['traffic'] + incident_load * w['incidents']
 
-        # The diffusion now happens on a dictionary keyed by NODE names for correctness.
         node_risks = {data['node']: evidence_risk.get(zone, 0) for zone, data in self.data_fabric.zones.items()}
         diffused_node_risks = self._diffuse_risk_on_graph(node_risks)
-
         return prior_risks, diffused_node_risks
 
     def calculate_kld_anomaly_score(self, live_state: Dict) -> Tuple[float, Dict, Dict]:
-        """
-        FIX: Correctly calculates KL Divergence by comparing current SPATIAL incident
-        distribution against a historical SPATIAL distribution.
-        """
-        hist_dist = self.config['historical_zone_distribution']
+        hist_dist = _normalize_dist(self.config['historical_zone_distribution'])
         zones = list(self.data_fabric.zones.keys())
         incidents_by_zone = {zone: 0 for zone in zones}
         total_incidents = 0
@@ -249,16 +239,12 @@ class QuantumCognitiveEngine:
         epsilon = 1e-9
         kl_divergence = 0.0
         for zone in zones:
-            p = current_dist.get(zone, 0.0) + epsilon # Current probability
-            q = hist_dist.get(zone, 0.0) + epsilon   # Historical probability
+            p = current_dist.get(zone, 0.0) + epsilon
+            q = hist_dist.get(zone, 0.0) + epsilon
             kl_divergence += p * np.log(p / q)
-            
         return kl_divergence, hist_dist, current_dist
 
     def calculate_projected_response_time(self, zone_name: str, available_ambulances: List[Dict]) -> float:
-        """
-        FIX: Calculates response time using the road network graph, not Euclidean distance.
-        """
         zone_data = self.data_fabric.zones.get(zone_name)
         if not zone_data or not available_ambulances: return 99.0
 
@@ -271,28 +257,19 @@ class QuantumCognitiveEngine:
             amb_node = amb.get('nearest_node')
             if not amb_node or not nx.has_path(self.data_fabric.road_graph, amb_node, zone_node):
                 continue
-                
-            # Calculate shortest path using the graph weights (assumed to be in minutes)
             travel_time = nx.shortest_path_length(self.data_fabric.road_graph, source=amb_node, target=zone_node, weight='weight')
             total_time += travel_time + self.params.get('response_time_turnout_penalty', 3.0)
             count += 1
-            
         return _safe_division(total_time, count, default=99.0)
 
     def recommend_resource_reallocations(self, risk_scores: Dict) -> List[Dict]:
-        """
-        Recommends ambulance movements based on a greedy optimization to reduce
-        the highest system deficit (risk * response_time).
-        NOTE: This is a greedy algorithm focusing on the worst-off zone. It does not
-        guarantee a global optimum.
-        """
         recommendations = []
         available_ambulances = [{'id': amb_id, **amb_data} for amb_id, amb_data in self.data_fabric.ambulances.items() if amb_data['status'] == 'Disponible']
         if not available_ambulances: return []
 
         zone_perf = {z: {'risk': risk_scores.get(data['node'], 0), 'response_time': self.calculate_projected_response_time(z, available_ambulances)} for z, data in self.data_fabric.zones.items()}
         deficits = {z: perf['risk'] * perf['response_time'] for z, perf in zone_perf.items()}
-        if not deficits or max(deficits.values()) < 1.0: return [] # Arbitrary threshold to avoid trivial recommendations
+        if not deficits or max(deficits.values()) < 1.0: return []
         
         target_zone = max(deficits, key=deficits.get)
         
@@ -300,21 +277,18 @@ class QuantumCognitiveEngine:
         original_response_time = zone_perf[target_zone]['response_time']
 
         for amb_to_move in available_ambulances:
-            # Temporarily move the ambulance for calculation
             target_zone_centroid = self.data_fabric.zones[target_zone]['polygon'].centroid
             moved_amb_list = [
                 {**amb, 'nearest_node': find_nearest_node(self.data_fabric.road_graph, target_zone_centroid)} if amb['id'] == amb_to_move['id'] else amb
                 for amb in available_ambulances
             ]
-            
             new_response_time = self.calculate_projected_response_time(target_zone, moved_amb_list)
             improvement = original_response_time - new_response_time
-            
             if improvement > max_improvement:
                 max_improvement = improvement
                 best_candidate = (amb_to_move['id'], self._get_zone_for_point(amb_to_move['location']), new_response_time)
 
-        if best_candidate and max_improvement > 1.0: # Only recommend if improvement is > 1 minute
+        if best_candidate and max_improvement > 1.0:
             amb_id, from_zone, new_time = best_candidate
             if from_zone:
                 reason = f"Reducir el tiempo de respuesta proyectado en '{target_zone}' de ~{original_response_time:.0f} min a ~{new_time:.0f} min."
@@ -322,26 +296,21 @@ class QuantumCognitiveEngine:
         return recommendations
 
     def forecast_risk_over_time(self, current_risk: Dict, current_anomaly_score: float, hours_ahead: int) -> pd.DataFrame:
-        """Forecasts risk using a Markov Chain to model system state transitions."""
         forecast_data = []
-        # Map anomaly score to initial state: 0:Nominal, 1:Elevated, 2:Anomalous
         if current_anomaly_score > 0.2: initial_state_idx = 2
         elif current_anomaly_score > 0.1: initial_state_idx = 1
         else: initial_state_idx = 0
         
         current_state_prob = np.zeros(3); current_state_prob[initial_state_idx] = 1.0
-        
         zone_names = list(self.data_fabric.zones.keys())
         zone_nodes = [self.data_fabric.zones[z]['node'] for z in zone_names]
         
         for h in range(hours_ahead):
             current_state_prob = np.dot(current_state_prob, self.markov_matrix)
-            # Risk multiplier based on probability of being in elevated or anomalous state
             risk_multiplier = 1.0 + current_state_prob[1] * 0.1 + current_state_prob[2] * 0.3
             for zone_name, zone_node in zip(zone_names, zone_nodes):
                 base_risk = current_risk.get(zone_node, 0)
                 forecast_data.append({'hour': h + 1, 'zone': zone_name, 'projected_risk': base_risk * risk_multiplier})
-                
         return pd.DataFrame(forecast_data)
 
 class PlottingSME:
@@ -457,32 +426,20 @@ def render_intel_briefing(anomaly_score, recommendations, app_config):
     else:
         st.success("No se requieren reasignaciones de recursos en este momento. El sistema está equilibrado.")
 
-def render_tab_content(tab_name: str, data_fabric, engine, app_config):
-    """Central function to generate UI and call engine based on selected tab or scenario."""
-    if tab_name == "Sandbox":
-        st.header("Command Sandbox: Simulador Interactivo")
-        st.info("Ajuste los parámetros ambientales y del modelo para ver cómo evoluciona el estado de la ciudad en tiempo real.")
-        st.subheader("Parámetros del Entorno")
-        c1, c2, c3 = st.columns(3)
-        is_holiday = c1.checkbox("Día Festivo")
-        is_payday = c2.checkbox("Día de Pago (Quincena)")
-        weather_condition = c3.selectbox("Condiciones Climáticas", ["Despejado", "Lluvia", "Niebla"])
-        st.subheader("Parámetros del Modelo (Proceso de Hawkes)")
-        col1, col2 = st.columns(2)
-        base_rate = col1.slider("μ (Tasa Base de Incidentes)", 1, 20, 5, help="Controla la tasa de nuevos incidentes independientes.")
-        excitation = col2.slider("κ (Auto-Excitación)", 0.0, 1.0, 0.5, help="Probabilidad de que un incidente crítico genere 'ecos' secundarios.")
-        env_factors = {'is_holiday': is_holiday, 'is_payday': is_payday, 'weather_condition': weather_condition, 'major_event_active': False, 'traffic_multiplier': 1.0, 'base_rate': base_rate, 'self_excitation_factor': excitation}
-    
-    elif tab_name == "Scenarios":
-        st.header("Planificación Estratégica de Escenarios")
-        st.info("Pruebe la resiliencia del sistema ante escenarios predefinidos de alto impacto.")
-        scenario_options = {
-            "Día Normal": {'is_holiday': False, 'is_payday': False, 'weather_condition': 'Despejado', 'major_event_active': False, 'traffic_multiplier': 1.0, 'self_excitation_factor': 0.3, 'base_rate': 5},
-            "Colapso Fronterizo (Quincena)": {'is_holiday': False, 'is_payday': True, 'weather_condition': 'Despejado', 'major_event_active': False, 'traffic_multiplier': 3.0, 'self_excitation_factor': 0.6, 'base_rate': 8},
-            "Partido de Fútbol con Lluvia": {'is_holiday': False, 'is_payday': False, 'weather_condition': 'Lluvia', 'major_event_active': True, 'traffic_multiplier': 1.8, 'self_excitation_factor': 0.7, 'base_rate': 12},
-        }
-        chosen_scenario = st.selectbox("Seleccione un Escenario:", list(scenario_options.keys()))
-        env_factors = scenario_options[chosen_scenario]
+def render_sandbox_tab(data_fabric, engine, app_config):
+    """Renders the interactive command sandbox tab."""
+    st.header("Command Sandbox: Simulador Interactivo")
+    st.info("Ajuste los parámetros ambientales y del modelo para ver cómo evoluciona el estado de la ciudad en tiempo real.")
+    st.subheader("Parámetros del Entorno")
+    c1, c2, c3 = st.columns(3)
+    is_holiday = c1.checkbox("Día Festivo")
+    is_payday = c2.checkbox("Día de Pago (Quincena)")
+    weather_condition = c3.selectbox("Condiciones Climáticas", ["Despejado", "Lluvia", "Niebla"])
+    st.subheader("Parámetros del Modelo (Proceso de Hawkes)")
+    col1, col2 = st.columns(2)
+    base_rate = col1.slider("μ (Tasa Base de Incidentes)", 1, 20, 5, help="Controla la tasa de nuevos incidentes independientes.")
+    excitation = col2.slider("κ (Auto-Excitación)", 0.0, 1.0, 0.5, help="Probabilidad de que un incidente crítico genere 'ecos' secundarios.")
+    env_factors = {'is_holiday': is_holiday, 'is_payday': is_payday, 'weather_condition': weather_condition, 'major_event_active': False, 'traffic_multiplier': 1.0, 'base_rate': base_rate, 'self_excitation_factor': excitation}
     
     live_state = engine.get_live_state(**env_factors)
     _, holistic_risk_scores = engine.calculate_holistic_risk(live_state)
@@ -491,9 +448,34 @@ def render_tab_content(tab_name: str, data_fabric, engine, app_config):
     
     render_intel_briefing(anomaly_score, recommendations, app_config)
     st.divider()
-    map_title = f"Mapa del Escenario: {chosen_scenario}" if tab_name == "Scenarios" else "Mapa de Operaciones Dinámicas"
-    st.subheader(map_title)
+    st.subheader("Mapa de Operaciones Dinámicas")
     
+    with st.spinner("Preparando visualización..."):
+        all_incidents = live_state.get("active_incidents", [])
+        zones_gdf, hosp_df, amb_df, inc_df, heat_df = prepare_visualization_data(data_fabric, holistic_risk_scores, all_incidents, app_config.get('styling', {}))
+        st.pydeck_chart(create_deck_gl_map(zones_gdf, hosp_df, amb_df, inc_df, heat_df, app_config), use_container_width=True)
+
+def render_scenario_planner_tab(data_fabric, engine, app_config):
+    """Renders the strategic scenario planning tab."""
+    st.header("Planificación Estratégica de Escenarios")
+    st.info("Pruebe la resiliencia del sistema ante escenarios predefinidos de alto impacto.")
+    scenario_options = {
+        "Día Normal": {'is_holiday': False, 'is_payday': False, 'weather_condition': 'Despejado', 'major_event_active': False, 'traffic_multiplier': 1.0, 'self_excitation_factor': 0.3, 'base_rate': 5},
+        "Colapso Fronterizo (Quincena)": {'is_holiday': False, 'is_payday': True, 'weather_condition': 'Despejado', 'major_event_active': False, 'traffic_multiplier': 3.0, 'self_excitation_factor': 0.6, 'base_rate': 8},
+        "Partido de Fútbol con Lluvia": {'is_holiday': False, 'is_payday': False, 'weather_condition': 'Lluvia', 'major_event_active': True, 'traffic_multiplier': 1.8, 'self_excitation_factor': 0.7, 'base_rate': 12},
+    }
+    chosen_scenario = st.selectbox("Seleccione un Escenario:", list(scenario_options.keys()))
+    env_factors = scenario_options[chosen_scenario]
+
+    live_state = engine.get_live_state(**env_factors)
+    _, holistic_risk_scores = engine.calculate_holistic_risk(live_state)
+    anomaly_score, _, _ = engine.calculate_kld_anomaly_score(live_state)
+    recommendations = engine.recommend_resource_reallocations(holistic_risk_scores)
+
+    render_intel_briefing(anomaly_score, recommendations, app_config)
+    st.divider()
+    st.subheader(f"Mapa del Escenario: {chosen_scenario}")
+
     with st.spinner("Preparando visualización..."):
         all_incidents = live_state.get("active_incidents", [])
         zones_gdf, hosp_df, amb_df, inc_df, heat_df = prepare_visualization_data(data_fabric, holistic_risk_scores, all_incidents, app_config.get('styling', {}))
@@ -515,7 +497,6 @@ def render_analysis_tab(data_fabric, engine, plotter, app_config):
     
     prior_risks, posterior_risks = engine.calculate_holistic_risk(live_state)
     prior_df = pd.DataFrame(list(prior_risks.items()), columns=['zone', 'risk'])
-    # Map posterior risks from node names back to zone names for plotting
     node_to_zone = {data['node']: zone for zone, data in data_fabric.zones.items()}
     posterior_df = pd.DataFrame([{'zone': node_to_zone.get(node, 'Unknown'), 'risk': risk} for node, risk in posterior_risks.items()])
     st.altair_chart(plotter.plot_risk_comparison(prior_df, posterior_df), use_container_width=True)
@@ -552,9 +533,8 @@ def render_forecasting_tab(engine, plotter):
         st.error("No se pudieron generar datos de pronóstico para la zona seleccionada.")
         
 def render_knowledge_center():
-    st.header("Centro de Conocimiento del Modelo (v2.1)")
+    st.header("Centro de Conocimiento del Modelo (v2.2)")
     st.info("Este es el manual de usuario para los modelos matemáticos que impulsan este Digital Twin.")
-    
     st.subheader("1. Proceso de Hawkes (Simulación de Incidentes)")
     st.markdown("""
     - **¿Qué es?** Un modelo para eventos que se "auto-excitan", donde un evento aumenta la probabilidad de que ocurran más eventos en el futuro cercano. Es ideal para modelar réplicas o efectos en cascada.
@@ -587,32 +567,23 @@ def render_knowledge_center():
 def main():
     st.set_page_config(page_title="RedShield AI: Command Suite", layout="wide", initial_sidebar_state="expanded")
 
-    # CORRECTED INITIALIZATION LOGIC:
-    # 1. Call the cached function on every script run.
-    # 2. @st.cache_resource ensures the expensive objects are created only ONCE per app lifetime.
-    # 3. On subsequent runs, this line is fast and simply returns the cached objects.
-    # 4. This avoids the brittle st.session_state check for app-level singletons.
     data_fabric, engine, app_config = get_singleton_engine()
-
-    # Pass the retrieved app_config variable directly.
     setup_plotting_theme(app_config.get('styling', {}))
     plotter = PlottingSME(app_config.get('styling', {}))
 
     st.sidebar.title("RedShield AI")
-    st.sidebar.write("Suite de Comando Estratégico v2.1")
+    st.sidebar.write("Suite de Comando Estratégico v2.2")
     tab_choice = st.sidebar.radio("Navegación", ["Sandbox de Comando", "Planificación Estratégica", "Análisis Profundo", "Pronóstico de Riesgo", "Centro de Conocimiento"], label_visibility="collapsed")
     st.sidebar.divider()
     st.sidebar.info("Simulación para Tijuana, B.C. Basado en datos de código abierto y modelos estocásticos.")
 
-    # Pass the retrieved objects as normal arguments to the rendering functions.
     if tab_choice == "Sandbox de Comando":
-        render_tab_content("Sandbox", data_fabric, engine, app_config)
+        render_sandbox_tab(data_fabric, engine, app_config)
     elif tab_choice == "Planificación Estratégica":
-        render_tab_content("Scenarios", data_fabric, engine, app_config)
+        render_scenario_planner_tab(data_fabric, engine, app_config)
     elif tab_choice == "Análisis Profundo":
         render_analysis_tab(data_fabric, engine, plotter, app_config)
     elif tab_choice == "Pronóstico de Riesgo":
-        # Note: This function correctly uses st.session_state for 'analysis_state', which IS session-specific.
         render_forecasting_tab(engine, plotter)
     elif tab_choice == "Centro de Conocimiento":
         render_knowledge_center()
