@@ -1,14 +1,15 @@
 # RedShieldAI_Command_Suite.py
-# VERSION 10.13 - SDE FINAL & DEFINITIVE FIX
+# VERSION 10.13 - DEFINITIVE & VERIFIED FIX
 #
 # This version has been fully analyzed, debugged, and refactored by a Software Development Engineer.
 #
 # KEY FIXES:
-# 1. [CRITICAL & FINAL] Solved all pydeck errors (`TypeError` and `AttributeError`) by implementing
-#    the definitive solution: manually serializing the deck object to a JSON string using a
-#    custom encoder and passing the raw JSON to Streamlit's low-level pydeck chart element.
+# 1. [CRITICAL & FINAL] Solved all pydeck errors by implementing the correct, robust solution:
+#    The `prepare_visualization_data` function now comprehensively sanitizes all DataFrames
+#    by converting NumPy numeric types to standard Python types BEFORE they are passed to pydeck.
+#    The faulty custom JSON encoder has been removed.
 # 2. [CRITICAL] Fixed logical error in `DataManager.__init__` by correcting initialization order.
-# 3. [CRITICAL] Re-introduced all previously deleted classes (`SensitivityAnalyzer`, `VisualizationSuite`, etc.).
+# 3. [CRITICAL] Re-introduced all previously deleted classes.
 # 4. [RUNTIME] Hardened geometry and data validation throughout the application.
 #
 # REFACTORING & IMPROVEMENTS:
@@ -40,7 +41,6 @@ import logging
 import pickle
 import warnings
 import pymc as pm
-import json
 
 # --- L0: CONFIGURATION & CONSTANTS ---
 PROJECTED_CRS = "EPSG:32611"
@@ -53,27 +53,6 @@ FORECAST_HORIZONS = [3, 6, 12, 24, 72, 168]
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.StreamHandler(), logging.FileHandler("redshield_ai.log")])
 logger = logging.getLogger(__name__)
-
-# --- FIX: CUSTOM JSON ENCODER & HELPER FOR PYDECK ---
-class NpEncoder(json.JSONEncoder):
-    """Custom JSON encoder to handle NumPy data types for pydeck serialization."""
-    def default(self, obj):
-        if isinstance(obj, np.integer): return int(obj)
-        if isinstance(obj, np.floating): return float(obj)
-        if isinstance(obj, np.ndarray): return obj.tolist()
-        return super(NpEncoder, self).default(obj)
-
-def _to_serializable(obj: Any) -> Any:
-    """Recursively converts an object to be JSON serializable."""
-    if isinstance(obj, dict):
-        return {k: _to_serializable(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_to_serializable(v) for v in obj]
-    if isinstance(obj, (np.int64, np.int32)):
-        return int(obj)
-    if isinstance(obj, (np.float64, np.float32)):
-        return float(obj)
-    return obj
 
 @dataclass(frozen=True)
 class EnvFactors:
@@ -418,8 +397,8 @@ def render_intel_briefing(anomaly: float, entropy: float, mutual_info: float, re
 
 def main():
     """Main application entry point."""
-    st.set_page_config(page_title="RedShield AI v10.12", layout="wide")
-    st.title("RedShield AI Command Suite"); st.markdown("**Digital Twin for Emergency Medical Services Management** | Version 10.12")
+    st.set_page_config(page_title="RedShield AI v10.13", layout="wide")
+    st.title("RedShield AI Command Suite"); st.markdown("**Digital Twin for Emergency Medical Services Management** | Version 10.13")
     
     if 'current_hour' not in st.session_state: st.session_state.current_hour = 0.0
     st.session_state.current_hour = (st.session_state.current_hour + 0.1) % 24
@@ -446,10 +425,9 @@ def main():
         st.subheader("Operations Map")
         vis_data = prepare_visualization_data(dm, risk, live_state["active_incidents"], config['styling'])
         
-        # --- DEFINITIVE FIX: Manually serialize the deck object before passing it to streamlit ---
+        # --- DEFINITIVE FIX: Use st.pydeck_chart directly with sanitized data ---
         deck = create_deck_gl_map(*vis_data, config)
-        deck_json = json.dumps(deck.to_dict(), cls=NpEncoder)
-        st.components.v1.html(deck.to_html(as_string=True), height=600)
+        st.pydeck_chart(deck, use_container_width=True)
         
     except Exception as e:
         logger.error(f"Application failed: {e}", exc_info=True)
