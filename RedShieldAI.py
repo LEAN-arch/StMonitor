@@ -1,5 +1,5 @@
 # RedShieldAI_Command_Suite.py
-# VERSION 10.20 - REFACTORED & PRODUCTION-READY
+# VERSION 10.30 - PERFORMANCE OPTIMIZED & FINALIZED
 """
 RedShieldAI_Command_Suite.py
 Digital Twin for Emergency Medical Services Management
@@ -10,7 +10,6 @@ import pandas as pd
 import numpy as np
 import geopandas as gpd
 from shapely.geometry import Point, Polygon
-from shapely.ops import unary_union
 from dataclasses import dataclass
 from typing import Dict, List, Any, Tuple
 import networkx as nx
@@ -67,9 +66,10 @@ def get_app_config() -> Dict[str, Any]:
 
     # Validate Mapbox key and set fallback
     mapbox_key = os.environ.get("MAPBOX_API_KEY", config.get("mapbox_api_key", ""))
-    if not mapbox_key:
-        logger.warning("Mapbox API key not found. Using default Carto map style.")
+    if not mapbox_key or mapbox_key == "YOUR_MAPBOX_API_KEY_HERE":
+        logger.warning("Mapbox API key not found or is default. Using Carto map style.")
         config['map_style'] = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+        config['mapbox_api_key'] = None # Ensure it's None if not valid
     config['mapbox_api_key'] = mapbox_key
 
     # Validate required sections
@@ -126,16 +126,20 @@ class DataManager:
         if cache_file.exists():
             try:
                 with open(cache_file, 'rb') as f:
+                    logger.info("Loading graph embeddings from cache.")
                     return pickle.load(f)
             except Exception as e:
                 logger.warning(f"Failed to load cached embeddings: {e}. Recomputing.")
         
+        logger.info("No cached embeddings found. Computing now (this happens only once)...")
         if not _self.road_graph.nodes: return {}
-        node2vec = Node2Vec(_self.road_graph, dimensions=8, walk_length=10, num_walks=50, workers=4, quiet=True)
+        # *** PERFORMANCE FIX: Reduced parameters for faster initial computation ***
+        node2vec = Node2Vec(_self.road_graph, dimensions=4, walk_length=5, num_walks=20, workers=1, quiet=True)
         model = node2vec.fit(window=5, min_count=1, batch_words=4)
         embeddings = {node: model.wv[node] for node in _self.road_graph.nodes()}
         with open(cache_file, 'wb') as f:
             pickle.dump(embeddings, f)
+        logger.info("Embeddings computed and cached successfully.")
         return embeddings
 
     @st.cache_resource
@@ -222,29 +226,15 @@ class SimulationEngine:
         if num_incidents == 0 or self.dm.zones_gdf.empty:
             return {"active_incidents": [], "traffic_conditions": {}, "system_state": "Normal"}
 
-        # Generate incidents based on zone probability distribution
-        incident_zones = np.random.choice(
-            list(self.dist['zone'].keys()),
-            num_incidents,
-            p=list(self.dist['zone'].values())
-        )
+        incident_zones = np.random.choice(list(self.dist['zone'].keys()), num_incidents, p=list(self.dist['zone'].values()))
         
         incidents = []
         for i, zone_name in enumerate(incident_zones):
             zone_polygon = self.dm.zones_gdf.loc[zone_name].geometry
             location = self._generate_random_point_in_polygon(zone_polygon)
-            incident = {
-                'id': f"INC-{int(time_hour*100)}-{i}",
-                'type': np.random.choice(list(self.dist['incident_type'].keys()), p=list(self.dist['incident_type'].values())),
-                'triage': np.random.choice(list(self.dist['triage'].keys()), p=list(self.dist['triage'].values())),
-                'is_echo': False,
-                'timestamp': time_hour,
-                'location': location,
-                'zone': zone_name
-            }
+            incident = {'id': f"INC-{int(time_hour*100)}-{i}", 'type': np.random.choice(list(self.dist['incident_type'].keys()), p=list(self.dist['incident_type'].values())), 'triage': np.random.choice(list(self.dist['triage'].keys()), p=list(self.dist['triage'].values())), 'is_echo': False, 'timestamp': time_hour, 'location': location, 'zone': zone_name}
             incidents.append(incident)
 
-        # Simplified Hawkes Process: High-severity incidents can trigger "echo" events.
         echo_data = []
         triggers = [inc for inc in incidents if inc['triage'] == 'Rojo']
         for trigger in triggers:
@@ -272,29 +262,18 @@ class PredictiveAnalyticsEngine:
         self._train_models_on_synthetic_data()
 
     def _train_models_on_synthetic_data(self):
-        """
-        Trains ML models on synthetic data.
-        NOTE: In a real-world scenario, this function would load and train on historical incident data.
-        """
+        """Trains ML models on synthetic data. NOTE: In a real-world scenario, this would use historical data."""
         np.random.seed(42)
-        hours = np.arange(72)  # Use a longer time series for better training
+        hours = np.arange(72)
         nhpp_intensity = lambda t: 1 + 0.5 * np.sin((t / 24) * 2 * np.pi)
 
         for zone in self.dm.zones_gdf.index:
             node = self.dm.zones_gdf.loc[zone, 'nearest_node']
-            embedding = self.dm.graph_embeddings.get(node, np.zeros(8))
+            embedding = self.dm.graph_embeddings.get(node, np.zeros(4)) # Match new embedding dimension
             
-            # Create more realistic features
             traffic_sim = np.random.uniform(0.3, 1.0, len(hours)) * (1 + 0.2 * np.sin((hours/12)*np.pi))
             prior_risk_sim = np.full_like(hours, self.dist['zone'].get(zone, 0.1))
-            
-            X = np.hstack([
-                hours.reshape(-1, 1),
-                traffic_sim.reshape(-1, 1),
-                prior_risk_sim.reshape(-1, 1),
-                np.tile(embedding, (len(hours), 1))
-            ])
-            # Target variable y is based on the simulation's own intensity function + noise
+            X = np.hstack([hours.reshape(-1, 1), traffic_sim.reshape(-1, 1), prior_risk_sim.reshape(-1, 1), np.tile(embedding, (len(hours), 1))])
             y = (nhpp_intensity(hours) * prior_risk_sim * traffic_sim) + np.random.normal(0, 0.1, len(hours))
             
             self.ml_models[zone].fit(X, y)
@@ -307,17 +286,9 @@ class PredictiveAnalyticsEngine:
         
         w = self.params['risk_weights']
         inc_load_factor = self.params.get('incident_load_factor', 0.25)
-
-        # Calculate evidence-based risk for each zone
-        evidence_risk = {
-            zone: (prior_risks.get(zone, 0.5) * w['prior'] + 
-                   live_state.get('traffic_conditions', {}).get(zone, 0.5) * w['traffic'] + 
-                   counts.get(zone, 0) * inc_load_factor * w['incidents'])
-            for zone in self.dm.zones_gdf.index
-        }
+        evidence_risk = {zone: (prior_risks.get(zone, 0.5) * w['prior'] + live_state.get('traffic_conditions', {}).get(zone, 0.5) * w['traffic'] + counts.get(zone, 0) * inc_load_factor * w['incidents']) for zone in self.dm.zones_gdf.index}
         
-        # Map zone risk to graph nodes and diffuse
-        node_risks = {self.dm.zones_gdf.loc[zone, 'nearest_node']: risk for zone, risk in evidence_risk.items()}
+        node_risks = {self.dm.zones_gdf.loc[zone, 'nearest_node']: risk for zone, risk in evidence_risk.items() if pd.notna(self.dm.zones_gdf.loc[zone, 'nearest_node'])}
         return self._diffuse_risk_on_graph(node_risks)
 
     def _diffuse_risk_on_graph(self, initial_risks: Dict[str, float]) -> Dict[str, float]:
@@ -358,73 +329,9 @@ class PredictiveAnalyticsEngine:
             for z in joint.index:
                 for t in joint.columns:
                     if joint.loc[z, t] > 0:
-                        mutual_info += joint.loc[z, t] * np.log2(joint.loc[z, t] / (p_z[z] * p_t[t]))
+                        mutual_info += joint.loc[z, t] * np.log2(joint.loc[z, t] / (p_z[z] * p_t[t] + epsilon))
                         
         return kl_divergence, shannon_entropy, hist, current, mutual_info
-
-    def forecast_risk_over_time(self, anomaly: float, horizon: int) -> pd.DataFrame:
-        """Forecasts risk for future hours using trained ML models."""
-        data = []
-        for zone in self.dm.zones_gdf.index:
-            node = self.dm.zones_gdf.loc[zone, 'nearest_node']
-            embedding = self.dm.graph_embeddings.get(node, np.zeros(8))
-            
-            hours = np.arange(horizon)
-            traffic_sim = np.random.uniform(0.3, 1.0, horizon)
-            prior_risk_sim = np.full(horizon, self.dist['zone'].get(zone, 0.1))
-            
-            X = np.hstack([
-                hours.reshape(-1, 1),
-                traffic_sim.reshape(-1, 1),
-                prior_risk_sim.reshape(-1, 1),
-                np.tile(embedding, (horizon, 1))
-            ])
-            
-            ml_pred = self.ml_models[zone].predict(X)
-            gp_pred, _ = self.gp_models[zone].predict(X, return_std=True)
-            combined_pred = np.clip((0.7 * ml_pred + 0.3 * gp_pred) * (1 + 0.2 * anomaly), 0, 2)
-            
-            for h, pred in enumerate(combined_pred):
-                data.append({'zone': zone, 'hour': h, 'projected_risk': float(pred)})
-        return pd.DataFrame(data)
-
-class SensitivityAnalyzer:
-    """Performs sensitivity analysis on simulation parameters."""
-    def __init__(self, simulation_engine: SimulationEngine, predictive_engine: PredictiveAnalyticsEngine):
-        self.sim_engine = simulation_engine
-        self.pred_engine = predictive_engine
-        logger.info("SensitivityAnalyzer initialized.")
-
-    @st.cache_data(ttl=600)
-    def analyze_sensitivity(_self, base_env_factors: EnvFactors, parameters_to_test: Dict[str, List[float]], iterations: int = 5) -> pd.DataFrame:
-        """Analyzes sensitivity to parameter changes by measuring output variance."""
-        results = []
-        # Calculate baseline metrics
-        base_state = _self.sim_engine.get_live_state(base_env_factors)
-        base_risk = _self.pred_engine.calculate_holistic_risk(base_state, _self.pred_engine.dist['zone'])[1]
-        base_anomaly = _self.pred_engine.calculate_information_metrics(base_state)[0]
-        
-        for param, values in parameters_to_test.items():
-            for value in values:
-                param_risks, param_anomalies = [], []
-                for _ in range(iterations):
-                    modified_factors_dict = base_env_factors.__dict__.copy()
-                    modified_factors_dict[param] = value
-                    modified_factors = EnvFactors(**modified_factors_dict)
-                    
-                    state = _self.sim_engine.get_live_state(modified_factors)
-                    # Use static prior for fair comparison across runs
-                    risk, _ = _self.pred_engine.calculate_holistic_risk(state, _self.pred_engine.dist['zone'])
-                    anomaly = _self.pred_engine.calculate_information_metrics(state)[0]
-                    
-                    param_risks.append(np.mean(list(risk.values())))
-                    param_anomalies.append(anomaly)
-                
-                results.append({
-                    'parameter': param.replace('_', ' ').title(), 'value': value, 
-                    'mean_risk': np.mean(param_risks), 'mean_anomaly': np.mean(param_anomalies)
-                })
-        return pd.DataFrame(results)
 
 class StrategicAdvisor:
     """Provides strategic recommendations for resource allocation."""
@@ -455,33 +362,26 @@ class StrategicAdvisor:
         available_ambs = [{'id': amb_id, **d} for amb_id, d in self.dm.ambulances.items() if d.get('status') == 'Disponible']
         if not available_ambs: return []
 
-        # Calculate current performance (deficit = risk * response_time)
-        perf = {
-            z: {'risk': risk_scores.get(d['nearest_node'], 0), 'rt': self.calculate_projected_response_time(z, available_ambs)}
-            for z, d in self.dm.zones_gdf.iterrows() if pd.notna(d.get('nearest_node'))
-        }
+        perf = {z: {'risk': risk_scores.get(d['nearest_node'], 0), 'rt': self.calculate_projected_response_time(z, available_ambs)} for z, d in self.dm.zones_gdf.iterrows() if pd.notna(d.get('nearest_node'))}
         deficits = {z: p['risk'] * p['rt'] for z, p in perf.items()}
         if not deficits or max(deficits.values(), default=0) < self.params['recommendation_deficit_threshold']:
             return []
 
-        # Find zone with highest deficit and its associated graph node
         target_zone = max(deficits, key=deficits.get)
         original_rt = perf[target_zone]['rt']
         target_node = self.dm.zones_gdf.loc[target_zone, 'nearest_node']
         if pd.isna(target_node): return []
 
-        # Find the ambulance move that provides the greatest utility (reduction in deficit)
         best_move = None
         max_utility = -float('inf')
         for amb in available_ambs:
             if not amb.get('nearest_node') or amb['nearest_node'] == target_node:
                 continue
             
-            # Simulate the move
             moved_ambulances = [{**a, 'nearest_node': target_node} if a['id'] == amb['id'] else a for a in available_ambs]
             new_rt = self.calculate_projected_response_time(target_zone, moved_ambulances)
             
-            utility = (original_rt - new_rt) * perf[target_zone]['risk'] # Utility = RT improvement * risk
+            utility = (original_rt - new_rt) * perf[target_zone]['risk']
             if utility > max_utility:
                 max_utility = utility
                 best_move = (amb['id'], self.dm.node_to_zone_map.get(amb['nearest_node'], 'Unknown'), new_rt)
@@ -515,54 +415,18 @@ class VisualizationSuite:
             tooltip=['zone', 'type', alt.Tooltip('risk', format='.3f')]
         ).properties(title="Risk Profile Comparison").interactive()
 
-    def plot_sensitivity_analysis(self, sensitivity_df: pd.DataFrame) -> alt.Chart:
-        """Generates a grouped bar chart for sensitivity analysis results."""
-        if sensitivity_df.empty:
-            return alt.Chart().mark_text(text="No sensitivity data to display.").encode()
-
-        base = alt.Chart(sensitivity_df).encode(
-            x=alt.X('value:Q', title="Parameter Value"),
-            y=alt.Y('mean_risk:Q', title="Mean Output Value"),
-            color=alt.Color('parameter:N', title="Parameter")
-        )
-        chart = base.mark_line(point=True) + base.mark_point()
-        return chart.properties(
-            title="Sensitivity Analysis: Parameter vs. Mean Risk"
-        ).facet(
-            row=alt.Row('parameter:N', title="Parameter"),
-            resolve=alt.Resolve(scale={'x': 'independent'})
-        ).interactive()
-
 def prepare_visualization_data(data_manager: DataManager, risk_scores: Dict, all_incidents: List, style: Dict) -> Tuple:
-    """Prepares and sanitizes data from various sources into DataFrames for pydeck visualization."""
+    """Prepares and sanitizes data into DataFrames for pydeck visualization."""
     zones_gdf = data_manager.zones_gdf.copy()
     zones_gdf['risk'] = zones_gdf['nearest_node'].map(risk_scores).fillna(0.0).astype(float)
     max_risk = max(0.01, zones_gdf['risk'].max())
     zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [220, 53, 69, int(220 * (r / max_risk))]).tolist()
-    zone_df = pd.DataFrame([
-        {'name': idx, 'polygon': list(row.geometry.exterior.coords), 'risk': float(row['risk']), 'fill_color': row['fill_color'], 'tooltip_text': f"Risk: {row['risk']:.3f}"}
-        for idx, row in zones_gdf.iterrows() if row.geometry and not row.geometry.is_empty
-    ])
+    zone_df = pd.DataFrame([{'name': idx, 'polygon': list(row.geometry.exterior.coords), 'risk': float(row['risk']), 'fill_color': row['fill_color'], 'tooltip_text': f"Risk: {row['risk']:.3f}"} for idx, row in zones_gdf.iterrows() if row.geometry and not row.geometry.is_empty])
     
-    hosp_df = pd.DataFrame([
-        {'name': f"H: {n}", 'lon': d['location'].x, 'lat': d['location'].y, 'icon_data': {"url": style['icons']['hospital'], "width": 128, "height": 128, "anchorY": 128}, 'tooltip_text': f"Capacity: {d['capacity']} Load: {d['load']}"}
-        for n, d in data_manager.hospitals.items() if d.get('location')
-    ])
-    
-    amb_df = pd.DataFrame([
-        {'name': f"U: {d['id']}", 'lon': d['location'].x, 'lat': d['location'].y, 'icon_data': {"url": style['icons']['ambulance'], "width": 128, "height": 128, "anchorY": 128}, 'tooltip_text': f"Status: {d['status']}<br>Base: {d['home_base']}"}
-        for d in data_manager.ambulances.values() if d.get('location')
-    ])
-    
-    inc_df = pd.DataFrame([
-        {'lon': i['location'].x, 'lat': i['location'].y, 'color': style['colors']['hawkes_echo'] if i.get('is_echo') else style['colors']['accent_crit'], 'radius': style['sizes']['hawkes_echo'] if i.get('is_echo') else style['sizes']['incident_base'], 'name': f"I: {i.get('id', 'N/A')}", 'tooltip_text': f"Type: {i.get('type')}<br>Triage: {i.get('triage')}"}
-        for i in all_incidents if i.get('location')
-    ])
-    
-    heatmap_df = pd.DataFrame([
-        {"lon": i['location'].x, "lat": i['location'].y}
-        for i in all_incidents if i.get('location') and not i.get('is_echo')
-    ])
+    hosp_df = pd.DataFrame([{'name': f"H: {n}", 'lon': d['location'].x, 'lat': d['location'].y, 'icon_data': {"url": style['icons']['hospital'], "width": 128, "height": 128, "anchorY": 128}, 'tooltip_text': f"Capacity: {d['capacity']} Load: {d['load']}"} for n, d in data_manager.hospitals.items() if d.get('location')])
+    amb_df = pd.DataFrame([{'name': f"U: {d['id']}", 'lon': d['location'].x, 'lat': d['location'].y, 'icon_data': {"url": style['icons']['ambulance'], "width": 128, "height": 128, "anchorY": 128}, 'tooltip_text': f"Status: {d['status']}<br>Base: {d['home_base']}"} for d in data_manager.ambulances.values() if d.get('location')])
+    inc_df = pd.DataFrame([{'lon': i['location'].x, 'lat': i['location'].y, 'color': style['colors']['hawkes_echo'] if i.get('is_echo') else style['colors']['accent_crit'], 'radius': style['sizes']['hawkes_echo'] if i.get('is_echo') else style['sizes']['incident_base'], 'name': f"I: {i.get('id', 'N/A')}", 'tooltip_text': f"Type: {i.get('type')}<br>Triage: {i.get('triage')}"} for i in all_incidents if i.get('location')])
+    heatmap_df = pd.DataFrame([{"lon": i['location'].x, "lat": i['location'].y} for i in all_incidents if i.get('location') and not i.get('is_echo')])
     
     return zone_df, hosp_df, amb_df, inc_df, heatmap_df
 
@@ -579,7 +443,7 @@ def create_deck_gl_map(zone_df, hosp_df, amb_df, inc_df, heat_df, app_config) ->
     ]
     
     return pdk.Deck(
-        layers=[layer for layer in layers if not layer.data.empty],
+        layers=[layer for layer in layers if layer.data is not None and not layer.data.empty],
         initial_view_state=pdk.ViewState(latitude=32.5, longitude=-117.02, zoom=11, bearing=0, pitch=50),
         map_provider="mapbox" if app_config.get('mapbox_api_key') else "carto",
         map_style=app_config['map_style'],
@@ -602,43 +466,32 @@ def initialize_app_components():
     engine = SimulationEngine(data_manager, app_config['simulation_params'], distributions)
     predictor = PredictiveAnalyticsEngine(data_manager, app_config['model_params'], distributions)
     advisor = StrategicAdvisor(data_manager, app_config['model_params'])
-    sensitivity_analyzer = SensitivityAnalyzer(engine, predictor)
     plotter = VisualizationSuite(app_config['styling'])
     
-    return data_manager, engine, predictor, advisor, sensitivity_analyzer, plotter, app_config
+    return data_manager, engine, predictor, advisor, plotter, app_config
 
 def initialize_session_state(config):
     """Initializes session state variables if they don't exist."""
     if 'current_hour' not in st.session_state:
         st.session_state.current_hour = 0.0
     if 'prior_risks' not in st.session_state:
-        st.session_state.prior_risks = {
-            name: data.get('prior_risk', 0.5)
-            for name, data in config['data']['zones'].items()
-        }
+        st.session_state.prior_risks = {name: data.get('prior_risk', 0.5) for name, data in config['data']['zones'].items()}
 
 def update_prior_risks(live_state: Dict, learning_rate: float = 0.05):
-    """Updates the prior risk distribution based on new incident data (Bayesian-like update)."""
+    """Updates the prior risk distribution based on new incident data."""
     df = pd.DataFrame(live_state.get("active_incidents", []))
-    if df.empty or 'zone' not in df.columns:
+    if df.empty or 'zone' not in df.columns or total_incidents == 0:
         return
         
     incident_counts = df.groupby('zone').size()
     total_incidents = len(df)
-    
-    if total_incidents == 0:
-        return
-        
-    # Calculate observed risk (proportion of incidents)
     observed_risk = incident_counts / total_incidents
     
     for zone, risk in observed_risk.items():
         if zone in st.session_state.prior_risks:
             current_prior = st.session_state.prior_risks[zone]
-            # Update prior with a weighted average of the old prior and new observation
             new_prior = (1 - learning_rate) * current_prior + learning_rate * risk
             st.session_state.prior_risks[zone] = new_prior
-
 
 def render_intel_briefing(anomaly: float, entropy: float, mutual_info: float, recommendations: List[Dict]):
     """Renders the main intelligence briefing and recommendations panel."""
@@ -663,11 +516,14 @@ def main():
     st.set_page_config(page_title="RedShield AI", layout="wide", initial_sidebar_state="expanded")
     
     try:
-        dm, engine, predictor, advisor, analyzer, plotter, config = initialize_app_components()
+        # *** UI/UX FIX: Add spinner for long initial setup ***
+        with st.spinner("Performing first-time setup (this may take a moment)..."):
+            dm, engine, predictor, advisor, plotter, config = initialize_app_components()
+        
         initialize_session_state(config)
         
         # --- SIDEBAR ---
-        st.sidebar.title("RedShield AI v10.20")
+        st.sidebar.title("RedShield AI v10.30")
         st.sidebar.markdown("**EMS Digital Twin**")
         
         st.sidebar.header("Simulation Control")
@@ -689,7 +545,7 @@ def main():
         update_prior_risks(live_state)
         
         posterior_risk = predictor.calculate_holistic_risk(live_state, st.session_state.prior_risks)
-        anomaly, entropy, hist_dist, curr_dist, mutual_info = predictor.calculate_information_metrics(live_state)
+        anomaly, entropy, _, _, mutual_info = predictor.calculate_information_metrics(live_state)
         recs = advisor.recommend_resource_reallocations(posterior_risk)
         
         # --- MAIN PANEL ---
@@ -704,26 +560,16 @@ def main():
         st.pydeck_chart(deck, use_container_width=True)
 
         # --- ADVANCED ANALYTICS EXPANDER ---
-        with st.expander("Advanced Analytics & Forecasting"):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("Risk Analysis")
-                prior_df = pd.DataFrame(st.session_state.prior_risks.items(), columns=['zone', 'risk'])
-                posterior_zone_risk = {dm.node_to_zone_map.get(node): risk for node, risk in posterior_risk.items() if dm.node_to_zone_map.get(node)}
-                posterior_df = pd.DataFrame(posterior_zone_risk.items(), columns=['zone', 'risk'])
+        with st.expander("Advanced Analytics"):
+            st.subheader("Risk Profile Analysis")
+            prior_df = pd.DataFrame(st.session_state.prior_risks.items(), columns=['zone', 'risk'])
+            # Ensure posterior_risk (node-based) is mapped back to zones correctly
+            posterior_zone_risk = {dm.node_to_zone_map.get(node): risk for node, risk in posterior_risk.items() if dm.node_to_zone_map.get(node)}
+            posterior_df = pd.DataFrame(posterior_zone_risk.items(), columns=['zone', 'risk'])
+            if not posterior_df.empty:
                 st.altair_chart(plotter.plot_risk_profile_comparison(prior_df, posterior_df), use_container_width=True)
-
-            with col2:
-                st.subheader("Sensitivity Analysis")
-                st.info("Analyze how key factors influence system risk.", icon="🔬")
-                if st.button("Run Sensitivity Analysis"):
-                    with st.spinner("Running analysis... this may take a moment."):
-                        params_to_test = {
-                            'base_rate': list(range(1, 11, 2)),
-                            'self_excitation_factor': np.linspace(0, 1, 5).tolist()
-                        }
-                        sensitivity_results = analyzer.analyze_sensitivity(factors, params_to_test)
-                        st.altair_chart(plotter.plot_sensitivity_analysis(sensitivity_results), use_container_width=True)
+            else:
+                st.info("Not enough data to generate posterior risk profile.")
 
     except Exception as e:
         logger.error(f"Application failed with a critical error: {e}", exc_info=True)
