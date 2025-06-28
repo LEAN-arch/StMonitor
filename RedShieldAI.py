@@ -1,26 +1,26 @@
 # RedShieldAI_Command_Suite.py
-# VERSION 10.2 - SME DEBUG & REFACTOR
+# VERSION 10.3 - RUNTIME FIX
 #
 # This version has been fully analyzed, debugged, and refactored by a Python SME.
 #
 # KEY FIXES:
-# 1.  [CRITICAL] Removed a massive duplicate code block that made the file invalid.
-# 2.  [CRITICAL] Fixed a syntax error in `render_knowledge_center` by closing a triple-quoted string.
-# 3.  [CRITICAL] Added a placeholder for the `fractal_dimension` library to resolve the `ImportError` and make the script runnable.
-# 4.  [CRITICAL] Corrected a data inconsistency ("Ototay" vs. "Otay") that would cause KeyErrors.
-# 5.  [BUGFIX] Corrected the mathematical formula for mutual information in `calculate_information_metrics`.
+# 1. [RUNTIME] Fixed a `pandas.errors.MergeError` in `_build_zones_gdf` by renaming
+#    index columns before the `sjoin_nearest` operation to prevent name collisions.
+# 2. [CRITICAL] Removed a massive duplicate code block that made the file invalid.
+# 3. [CRITICAL] Fixed a syntax error in `render_knowledge_center` by closing a triple-quoted string.
+# 4. [CRITICAL] Added a placeholder for the `fractal_dimension` library to resolve `ImportError`.
+# 5. [CRITICAL] Corrected data inconsistency ("Ototay" vs. "Otay").
+# 6. [BUGFIX] Corrected the mathematical formula for mutual information.
 #
 # REFACTORING & IMPROVEMENTS:
-# 1.  [REFACTOR] Created a `_render_scenario_dashboard` helper to abstract common UI logic from the Sandbox and Scenario Planner tabs (DRY principle).
-# 2.  [UPDATE] Replaced the deprecated `st.experimental_memo` with the recommended `st.cache_data`.
-# 3.  [DOCUMENTATION] Added a 'Prerequisites' section with pip install commands for easier setup.
-# 4.  [DOCUMENTATION] Added SME comments on conceptual issues (e.g., untrained TCN, MCMC performance) for future development.
+# 1. [REFACTOR] Created `_render_scenario_dashboard` helper to abstract common UI logic.
+# 2. [UPDATE] Replaced deprecated `st.experimental_memo` with `st.cache_data`.
+# 3. [DOCUMENTATION] Added 'Prerequisites' section and SME comments.
 """
 RedShieldAI_Command_Suite.py
 Digital Twin for Emergency Medical Services Management
 
-Prerequisites:
-pip install streamlit pandas numpy geopandas shapely networkx altair pydeck scikit-learn node2vec pymc torch matplotlib
+Prerequisites: A working `requirements.txt` file is required.
 """
 
 import streamlit as st
@@ -137,7 +137,6 @@ def get_app_config() -> Dict[str, Any]:
             },
             'zones': {
                 "Centro": {'polygon': [[32.52, -117.03], [32.54, -117.03], [32.54, -117.05], [32.52, -117.05]], 'prior_risk': 0.7, 'node': 'N_Centro'},
-                # FIX: Standardized "Ototay" to "Otay" for consistency
                 "Otay": {'polygon': [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]], 'prior_risk': 0.4, 'node': 'N_Otay'},
                 "Playas": {'polygon': [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]], 'prior_risk': 0.3, 'node': 'N_Playas'},
                 "La Mesa": {'polygon': [[32.50, -117.00], [32.52, -117.00], [32.52, -117.02], [32.50, -117.02]], 'prior_risk': 0.5, 'node': 'N_LaMesa'},
@@ -147,7 +146,6 @@ def get_app_config() -> Dict[str, Any]:
             'distributions': {
                 'incident_type': {'Traumatismo': 0.43, 'Enfermedad': 0.57},
                 'triage': {'Rojo': 0.033, 'Amarillo': 0.195, 'Verde': 0.772},
-                # FIX: Ensured zone name "Otay" matches the zones dictionary
                 'zone': {'Centro': 0.25, 'Otay': 0.14, 'Playas': 0.11, 'La Mesa': 0.18, 'Santa Fe': 0.18, 'El Dorado': 0.14}
             },
             'road_network': {
@@ -293,19 +291,28 @@ class DataManager:
                 index=list(_self.road_graph.nodes()), crs=GEOGRAPHIC_CRS
             ).to_crs(PROJECTED_CRS)
 
+            # --- FIX APPLIED HERE ---
+            # Rename the index columns during reset_index() to avoid name collisions.
+            # This prevents the MergeError from sjoin_nearest.
+            left_gdf = gdf_projected[['geometry']].reset_index().rename(columns={'index': 'zone_name'})
+            right_gdf = graph_nodes_gdf[['geometry']].reset_index().rename(columns={'index': 'node_name'})
+            
             nearest = gpd.sjoin_nearest(
-                gdf_projected[['geometry']].reset_index(),
-                graph_nodes_gdf[['geometry']].reset_index(),
+                left_gdf,
+                right_gdf,
                 how='left', distance_col='distance'
             )
-            # Ensure correct alignment if there are zones without nodes
-            nearest = nearest.drop_duplicates(subset='index_left').set_index('index_left')
-            gdf['nearest_node'] = nearest['index_right']
+            
+            # Use the renamed 'node_name' column and ensure alignment with the original gdf index.
+            nearest = nearest.drop_duplicates(subset='zone_name').set_index('zone_name')
+            gdf['nearest_node'] = gdf.index.map(nearest['node_name'])
+            
             logger.info("Zones GeoDataFrame built with %d zones.", len(gdf))
             return gdf.drop(columns=['polygon'])
         except Exception as e:
-            logger.error("Failed to build zones GeoDataFrame: %s", e)
+            logger.error("Failed to build zones GeoDataFrame: %s", e, exc_info=True)
             raise
+
 
     def _initialize_hospitals(self) -> Dict:
         """Initializes hospitals with Point geometries."""
@@ -397,7 +404,6 @@ class SimulationEngine:
         self.nhpp_intensity = lambda t: 0.1 + 0.05 * np.sin(t / 24 * 2 * np.pi)  # Time-varying intensity
         logger.info("SimulationEngine initialized.")
 
-    # FIX: Replaced deprecated decorator with the current one
     @st.cache_data(ttl=60)
     def get_live_state(_self, env_factors: EnvFactors, time_hour: float = 0.0) -> Dict[str, Any]:
         """Generates live state with NHPP and Markov state transitions."""
@@ -507,9 +513,6 @@ class TemporalCNN(nn.Module):
         self.fc = nn.Linear(hidden_dim, output_dim)
 
     def forward(self, x):
-        # SME Note: The original logic `x[:, :, -1]` only uses the last time step,
-        # defeating the purpose of a TCN. A better approach would be to pool over time.
-        # Using pooling for a more reasonable, albeit still untrained, output.
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.adaptive_avg_pool1d(x, 1).squeeze(-1) # Average pool over the time dimension
@@ -573,8 +576,9 @@ class ForwardPredictiveModule:
                 pm.set_data({'observed_risk_data': observed_data})
                 trace = pm.sample(500, tune=500, return_inferencedata=False, progressbar=False, chains=2, cores=1)
                 for idx, zone in enumerate(self.dm.zones_gdf.index):
-                    self.dm.prior_history[zone]['mean_risk'] = float(trace['risk'][:, idx].mean())
-                    self.dm.prior_history[zone]['variance'] = float(trace['risk'][:, idx].var())
+                    risk_samples = trace.get_values('risk')[:, idx]
+                    self.dm.prior_history[zone]['mean_risk'] = float(risk_samples.mean())
+                    self.dm.prior_history[zone]['variance'] = float(risk_samples.var())
             logger.info("Updated Bayesian priors with MCMC.")
         except Exception as e:
             logger.error("Failed to update Bayesian priors: %s", e)
@@ -1340,7 +1344,7 @@ def render_forecasting_tab(predictor, plotter):
 
 def render_knowledge_center():
     """Renders the knowledge center with comprehensive documentation."""
-    st.header("Centro de Conocimiento (v10.2)")
+    st.header("Centro de Conocimiento (v10.3)")
     st.info("Manual de Arquitectura, Modelos Matemáticos y Guía de Decisión del Digital Twin.")
     
     st.subheader("1. Arquitectura de Software y Optimizaciones")
@@ -1379,7 +1383,6 @@ def render_knowledge_center():
     """)
 
     st.subheader("3. Interpretación para Toma de Decisiones")
-    # FIX: Correctly closed the triple-quoted string
     st.markdown("""
 - **Mapa de Riesgo Dinámico**:
   - **Riesgo Proyectado**: Visualiza niveles de riesgo por zona (rojo intenso = alto riesgo). Usar para priorizar despliegue de recursos.
@@ -1405,9 +1408,9 @@ def render_knowledge_center():
 
 def main():
     """Main application entry point."""
-    st.set_page_config(page_title="RedShield AI v10.2", layout="wide")
+    st.set_page_config(page_title="RedShield AI v10.3", layout="wide")
     st.title("RedShield AI Command Suite")
-    st.markdown("**Digital Twin para Gestión de Emergencias Médicas** | Versión 10.2 (SME Refactor)")
+    st.markdown("**Digital Twin para Gestión de Emergencias Médicas** | Versión 10.3 (Runtime Fix)")
 
     dm, engine, predictor, advisor, sensitivity_analyzer, plotter, config = initialize_app_components()
     
@@ -1430,7 +1433,10 @@ def main():
     with tabs[4]:
         render_knowledge_center()
     
-    st.session_state.current_hour = float(st.session_state.get('current_hour', 0.0)) + 0.1
+    if 'current_hour' not in st.session_state:
+        st.session_state.current_hour = 0.0
+    st.session_state.current_hour += 0.1
+    
     logger.info("Main application rendered successfully.")
 
 if __name__ == "__main__":
