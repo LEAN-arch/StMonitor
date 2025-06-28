@@ -322,6 +322,327 @@ class SimulationEngine:
             if np.random.rand() < env_factors.self_excitation_factor:
                 for j in range(np.random.randint(1, 3)):
                     echo_loc = Point(trigger.geometry.x + np.random.normal(0, 0.005), trigger.geometry.y + np.random.normal(0, 0.005))
+                    echo_data.append({import streamlit as st
+import pandas as pd
+import numpy as np
+import geopandas as gpd
+from shapely.geometry import Point, Polygon
+from shapely.ops import nearest_points
+from dataclasses import dataclass
+from typing import Dict, List, Any, Tuple, Optional
+import networkx as nx
+import os
+import altair as alt
+import pydeck as pdk
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
+from node2vec import Node2Vec
+import logging
+from scipy import stats
+import pickle
+from pathlib import Path
+import warnings
+import pymc as pm
+import matplotlib.pyplot as plt
+
+# --- L0: CONFIGURATION & CONSTANTS ---
+PROJECTED_CRS = "EPSG:32611"
+GEOGRAPHIC_CRS = "EPSG:4326"
+DEFAULT_RESPONSE_TIME = 10.0
+CACHE_DIR = Path("cache")
+CACHE_DIR.mkdir(exist_ok=True)
+FORECAST_HORIZONS = [3, 6, 12, 24, 72, 168]  # Hours: 3h, 6h, 12h, 24h, 3d, 7d
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(), logging.FileHandler("redshield_ai.log")]
+)
+logger = logging.getLogger(__name__)
+
+@dataclass(frozen=True)
+class EnvFactors:
+    is_holiday: bool
+    is_payday: bool
+    weather_condition: str
+    major_event_active: bool
+    traffic_multiplier: float
+    base_rate: int
+    self_excitation_factor: float
+
+def get_app_config() -> Dict[str, Any]:
+    """Returns validated application configuration."""
+    mapbox_key = os.environ.get("MAPBOX_API_KEY", st.secrets.get("MAPBOX_API_KEY", ""))
+    map_style = "mapbox://styles/mapbox/dark-v10" if mapbox_key else "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+    if not mapbox_key:
+        logger.warning("Mapbox API key not found. Using default Carto map style.")
+
+    config = {
+        'mapbox_api_key': mapbox_key,
+        'map_style': map_style,
+        'data': {
+            'hospitals': {
+                "Hospital General": {'location': [32.5295, -117.0182], 'capacity': 100, 'load': 85},
+                "IMSS Clínica 1": {'location': [32.5121, -117.0145], 'capacity': 120, 'load': 70},
+                "Angeles": {'location': [32.5300, -117.0200], 'capacity': 100, 'load': 95},
+                "Cruz Roja (Hospital)": {'location': [32.5283, -117.0255], 'capacity': 80, 'load': 60}
+            },
+            'ambulances': {
+                "A01": {'status': "Disponible", 'home_base': 'Playas'},
+                "A02": {'status': "Disponible", 'home_base': 'Otay'},
+                "A03": {'status': "En Misión", 'home_base': 'La Mesa'},
+                "A04": {'status': "Disponible", 'home_base': 'Centro'},
+                "A05": {'status': "Disponible", 'home_base': 'El Dorado'},
+                "A06": {'status': "Disponible", 'home_base': 'Santa Fe'}
+            },
+            'zones': {
+                "Centro": {'polygon': [[32.52, -117.03], [32.54, -117.03], [32.54, -117.05], [32.52, -117.05]], 'prior_risk': 0.7, 'node': 'N_Centro'},
+                "Otay": {'polygon': [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]], 'prior_risk': 0.4, 'node': 'N_Otay'},
+                "Playas": {'polygon': [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]], 'prior_risk': 0.3, 'node': 'N_Playas'},
+                "La Mesa": {'polygon': [[32.50, -117.00], [32.52, -117.00], [32.52, -117.02], [32.50, -117.02]], 'prior_risk': 0.5, 'node': 'N_LaMesa'},
+                "Santa Fe": {'polygon': [[32.45, -117.02], [32.47, -117.02], [32.47, -117.04], [32.45, -117.04]], 'prior_risk': 0.5, 'node': 'N_SantaFe'},
+                "El Dorado": {'polygon': [[32.48, -116.96], [32.50, -116.96], [32.50, -116.98], [32.48, -116.98]], 'prior_risk': 0.4, 'node': 'N_ElDorado'}
+            },
+            'distributions': {
+                'incident_type': {'Traumatismo': 0.43, 'Enfermedad': 0.57},
+                'triage': {'Rojo': 0.033, 'Amarillo': 0.195, 'Verde': 0.772},
+                'zone': {'Centro': 0.25, 'Otay': 0.14, 'Playas': 0.11, 'La Mesa': 0.18, 'Santa Fe': 0.18, 'El Dorado': 0.14}
+            },
+            'road_network': {
+                'nodes': {
+                    "N_Centro": {'pos': [32.53, -117.04]},
+                    "N_Otay": {'pos': [32.535, -116.965]},
+                    "N_Playas": {'pos': [32.52, -117.12]},
+                    "N_LaMesa": {'pos': [32.51, -117.01]},
+                    "N_SantaFe": {'pos': [32.46, -117.03]},
+                    "N_ElDorado": {'pos': [32.49, -116.97]}
+                },
+                'edges': [
+                    ["N_Centro", "N_LaMesa", 5],
+                    ["N_Centro", "N_Playas", 12],
+                    "N_LaMesa", "N_Otay", 10],
+                    "N_LaMesa", "N_SantaFe", 8],
+                    "N_Otay", "N_ElDorado", 6]
+                ]
+            }
+        },
+        'model_params': {
+            'risk_diffusion_factor': 0.1,
+            'risk_diffusion_steps': 3,
+            'risk_weights': {'prior': 0.4, 'traffic': 0.3, 'incidents': 0.3},
+            'incident_load_factor': 0.25,
+            'response_time_turnout_penalty': 3.0,
+            'recommendation_deficit_threshold': 1.0,
+            'recommendation_improvement_threshold': 1.0,
+            'hawkes_intensity': 0.2,
+            'markov_transition': [[0.7, 0.2, 0.1], [0.3, 0.5, 0.2], [0.2, 0.3, 0.5]]
+        },
+        'simulation_params': {
+            'multipliers': {'holiday': 1.5, 'payday': 1.3, 'rain': 1.2, 'major_event': 2.0},
+            'forecast_multipliers': {'elevated': 0.1, 'anomalous': 0.3}
+        },
+        'styling': {
+            'colors': {
+                'primary': '#00A9FF',
+                'secondary': '#DC3545',
+                'accent_ok': '#00B359',
+                'accent_warn': '#FFB000',
+                'accent_crit': '#DC3545',
+                'background': '#0D1117',
+                'text': '#FFFFFF',
+                'hawkes_echo': [255, 107, 107, 150],
+                'chaos_high': [200, 50, 50, 200],
+                'chaos_low': [50, 200, 50, 100]
+            },
+            'sizes': {
+                'ambulance': 3.5,
+                'hospital': 4.0,
+                'incident_base': 100.0,
+                'hawkes_echo': 50.0
+            },
+            'icons': {
+                'hospital': "https://img.icons8.com/color/96/hospital-3.png",
+                'ambulance': "https://img.icons8.com/color/96/ambulance.png"
+            },
+            'map_elevation_multiplier': 5000.0
+        }
+    }
+    
+    required_sections = ['data', 'model_params', 'simulation_params', 'styling']
+    for section in required_sections:
+        if section not in config or not config[section]:
+            raise ValueError(f"Configuration section '{section}' is missing or empty.")
+    return config
+
+def _normalize_dist(dist: Dict[str, float]) -> Dict[str, float]:
+    """Normalizes a probability distribution with edge case handling."""
+    if not dist:
+        return {}
+    total = sum(v for v in dist.values() if isinstance(v, (int, float)) and v >= 0)
+    if total <= 0:
+        logger.warning("Invalid or zero-sum distribution encountered.")
+        return {k: 0.0 for k in dist}
+    return {k: v / total for k, v in dist.items() if isinstance(v, (int, float)) and v >= 0}
+
+class DataManager:
+    """Manages static data assets with optimized geospatial operations."""
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config.get('data', {})
+        self.road_graph = self._build_road_graph()
+        self.graph_embeddings = self._load_or_compute_graph_embeddings()
+        self.zones_gdf = self._build_zones_gdf()
+        self.hospitals = self._initialize_hospitals()
+        self.ambulances = self._initialize_ambulances()
+        self.city_boundary_poly = self.zones_gdf.unary_union
+        self.city_boundary_bounds = self.city_boundary_poly.bounds if self.city_boundary_poly else (0, 0, 0, 0)
+        self.node_to_zone_map = {data['node']: name for name, data in self.zones_gdf.iterrows() if 'node' in data and pd.notna(data['node'])}
+        self.prior_history = self._initialize_prior_history()
+        logger.info("DataManager initialized with %d zones, %d hospitals, %d ambulances.", len(self.zones_gdf), len(self.hospitals), len(self.ambulances))
+
+    @st.cache_resource
+    def _build_road_graph(_self) -> nx.Graph:
+        """Builds road graph with error handling."""
+        G = nx.Graph()
+        network_config = _self.config.get('road_network', {})
+        nodes = network_config.get('nodes', {})
+        edges = network_config.get('edges', [])
+        for node, data in nodes.items():
+            if 'pos' in data and len(data['pos']) == 2:
+                G.add_node(node, pos=data['pos'])
+        for edge in edges:
+            if len(edge) == 3 and edge[0] in G and edge[1] in G:
+                G.add_edge(edge[0], edge[1], weight=float(edge[2]))
+        logger.info("Road graph built with %d nodes and %d edges.", G.number_of_nodes(), G.number_of_edges())
+        return G
+
+    @st.cache_resource
+    def _load_or_compute_graph_embeddings(_self) -> Dict[str, np.ndarray]:
+        """Loads or computes Node2Vec embeddings with caching."""
+        cache_file = CACHE_DIR / "graph_embeddings.pkl"
+        if cache_file.exists():
+            try:
+                with open(cache_file, 'rb') as f:
+                    return pickle.load(f)
+            except Exception as e:
+                logger.warning("Failed to load cached embeddings: %s. Recomputing.", e)
+        if not _self.road_graph.nodes:
+            logger.warning("Road graph is empty. Returning empty embeddings.")
+            return {}
+        node2vec = Node2Vec(_self.road_graph, dimensions=8, walk_length=5, num_walks=20, workers=2, quiet=True)
+        model = node2vec.fit(window=5, min_count=1, batch_words=4)
+        embeddings = {node: model.wv[node] for node in _self.road_graph.nodes()}
+        with open(cache_file, 'wb') as f:
+            pickle.dump(embeddings, f)
+        logger.info("Computed and cached graph embeddings for %d nodes.", len(embeddings))
+        return embeddings
+
+    @st.cache_resource
+    def _build_zones_gdf(_self) -> gpd.GeoDataFrame:
+        """Builds zones GeoDataFrame with correct coordinate order and validation."""
+        zones = _self.config.get('zones', {})
+        if not zones:
+            logger.error("No zones defined in config.")
+            return gpd.GeoDataFrame()
+        df = pd.DataFrame.from_dict(zones, orient='index')
+        geometry = [Polygon([(lon, lat) for lat, lon in p]) if isinstance(p, list) and len(p) >= 3 else None for p in df['polygon']]
+        gdf = gpd.GeoDataFrame(df, geometry=geometry, crs=GEOGRAPHIC_CRS).dropna(subset=['geometry'])
+        gdf_projected = gdf.to_crs(PROJECTED_CRS)
+        gdf['centroid'] = gdf_projected.geometry.centroid.to_crs(GEOGRAPHIC_CRS)
+        graph_nodes_gdf = gpd.GeoDataFrame(
+            geometry=[Point(d['pos'][1], d['pos'][0]) for _, d in _self.road_graph.nodes(data=True)],
+            index=list(_self.road_graph.nodes()), crs=GEOGRAPHIC_CRS
+        ).to_crs(PROJECTED_CRS)
+        nearest = gpd.sjoin_nearest(gdf_projected[['geometry']], graph_nodes_gdf[['geometry']], how='left')
+        gdf['nearest_node'] = nearest['index_right']
+        logger.info("Zones GeoDataFrame built with %d valid zones.", len(gdf))
+        return gdf.drop(columns=['polygon'])
+
+    def _initialize_hospitals(self) -> Dict:
+        """Initializes hospitals with Point geometries."""
+        hospitals = {}
+        for name, data in self.config.get('hospitals', {}).items():
+            if 'location' in data and len(data['location']) == 2:
+                hospitals[name] = {**data, 'location': Point(data['location'][1], data['location'][0])}
+        return hospitals
+
+    def _initialize_ambulances(self) -> Dict:
+        """Initializes ambulances with location and node assignments."""
+        ambulances = {}
+        for amb_id, amb_data in self.config.get('ambulances', {}).items():
+            home_zone = amb_data.get('home_base')
+            if home_zone in self.zones_gdf.index:
+                zone_info = self.zones_gdf.loc[home_zone]
+                if zone_info.geometry.is_valid and not zone_info.centroid.is_empty:
+                    ambulances[amb_id] = {
+                        **amb_data,
+                        'id': amb_id,
+                        'location': zone_info.centroid,
+                        'nearest_node': zone_info.nearest_node
+                    }
+        logger.info("Initialized %d ambulances.", len(ambulances))
+        return ambulances
+
+    def _initialize_prior_history(self) -> Dict:
+        """Initializes historical priors for Bayesian updates."""
+        return {zone: {'mean_risk': data['prior_risk'], 'count': 1, 'variance': 0.1} for zone, data in self.zones_gdf.iterrows()}
+
+    def assign_zones_to_incidents(self, incidents_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """Assigns zones to incidents using spatial join."""
+        if incidents_gdf.empty or self.zones_gdf.empty:
+            return incidents_gdf.assign(zone=None)
+        return incidents_gdf.assign(zone=gpd.sjoin(incidents_gdf, self.zones_gdf[['geometry']], how="left", predicate="intersects")['index_right'])
+
+class SimulationEngine:
+    """Generates synthetic incident data with real-time simulation capabilities."""
+    def __init__(self, data_manager: DataManager, sim_params: Dict, distributions: Dict):
+        self.dm = data_manager
+        self.sim_params = sim_params
+        self.dist = distributions
+        self.nhpp_intensity = lambda t: 0.1 + 0.05 * np.sin(t / 24 * 2 * np.pi)
+
+    @st.cache_data(ttl=60)
+    def get_live_state(_self, env_factors: EnvFactors, time_hour: float = 0.0) -> Dict[str, Any]:
+        """Generates live state with NHPP and environmental factors."""
+        mult = _self.sim_params.get('multipliers', {})
+        intensity = _self.nhpp_intensity(time_hour) * float(env_factors.base_rate)
+        if env_factors.is_holiday: intensity *= mult.get('holiday', 1.0)
+        if env_factors.is_payday: intensity *= mult.get('payday', 1.0)
+        if env_factors.weather_condition == 'Rain': intensity *= mult.get('rain', 1.0)
+        if env_factors.major_event_active: intensity *= mult.get('major_event', 1.0)
+        
+        num_incidents = max(0, int(np.random.poisson(intensity)))
+        if num_incidents == 0:
+            return {"active_incidents": [], "traffic_conditions": {}, "system_state": "Normal"}
+        
+        incidents_gdf = gpd.GeoDataFrame(
+            {
+                'type': np.random.choice(list(_self.dist['incident_type'].keys()), num_incidents, p=list(_self.dist['incident_type'].values())),
+                'triage': np.random.choice(list(_self.dist['triage'].keys()), num_incidents, p=list(_self.dist['triage'].values())),
+                'is_echo': False,
+                'timestamp': time_hour
+            },
+            geometry=gpd.points_from_xy(
+                np.random.uniform(_self.dm.city_boundary_bounds[0], _self.dm.city_boundary_bounds[2], num_incidents),
+                np.random.uniform(_self.dm.city_boundary_bounds[1], _self.dm.city_boundary_bounds[3], num_incidents)
+            ),
+            crs=GEOGRAPHIC_CRS
+        )
+        incidents_gdf = incidents_gdf[incidents_gdf.within(_self.dm.city_boundary_poly)].reset_index(drop=True)
+        if incidents_gdf.empty:
+            return {"active_incidents": [], "traffic_conditions": {}, "system_state": "Normal"}
+        
+        incidents_gdf['id'] = [f"{row.type[0]}-{idx}" for idx, row in incidents_gdf.iterrows()]
+        incidents_gdf = _self.dm.assign_zones_to_incidents(incidents_gdf)
+        incidents_list = [{'location': row.geometry, **row.to_dict()} for _, row in incidents_gdf.iterrows()]
+        
+        triggers = incidents_gdf[incidents_gdf['triage'] == 'Rojo']
+        echo_data = []
+        for idx, trigger in triggers.iterrows():
+            if np.random.rand() < env_factors.self_excitation_factor:
+                for j in range(np.random.randint(1, 3)):
+                    echo_loc = Point(trigger.geometry.x + np.random.normal(0, 0.005), trigger.geometry.y + np.random.normal(0, 0.005))
                     echo_data.append({
                         'id': f"ECHO-{idx}-{j}",
                         'type': "Echo",
@@ -350,7 +671,7 @@ class ForwardPredictiveModule:
             risk = pm.Normal('risk', mu=[self.dm.prior_history[z]['mean_risk'] for z in zones], sigma=0.1, shape=len(zones))
             traffic = pm.Normal('traffic', mu=0.5, sigma=0.2, shape=len(zones))
             incidents = pm.Poisson('incidents', mu=1.0, shape=len(zones))
-            observed_risk_data = pm.MutableData('observed_risk_data', np.zeros(len(zones)))
+            observed_risk_data = pm.Data('observed_risk_data', np.zeros(len(zones)))
             combined_effect = risk * self.params['risk_weights']['prior'] + traffic * self.params['risk_weights']['traffic'] + incidents * self.params['risk_weights']['incidents']
             pm.Normal('observed_risk', mu=combined_effect, sigma=0.1, observed=observed_risk_data)
         return model
@@ -628,7 +949,7 @@ def create_deck_gl_map(zones_gdf: gpd.GeoDataFrame, hospital_df, ambulance_df, i
     """Creates a Deck.gl map with sanitized data."""
     style = app_config['styling']
     layers = [
-        pdk.Layer("PolygonLayer", data=zones_gdf, get_polygon="geometry.exterior.coords", filled=True, stroked=False, extruded=True, 
+        pdk.Layer("PolygonLayer", data=zones_gdf, filled=True, stroked=False, extruded=True, 
                   get_elevation=f"risk * {style['map_elevation_multiplier']}", get_fill_color="fill_color", opacity=0.1, pickable=True),
         pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style['sizes']['hospital'], size_scale=15, pickable=True),
         pdk.Layer("IconLayer", data=ambulance_df, get_icon="icon_data", get_position='[lon, lat]', get_size='size', size_scale=15, pickable=True)
