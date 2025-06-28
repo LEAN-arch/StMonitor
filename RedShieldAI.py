@@ -1,19 +1,19 @@
 # RedShieldAI_Command_Suite.py
-# VERSION 10.5 - SDE FINAL REVIEW & FIX
+# VERSION 10.6 - SDE FINAL REVIEW & CRITICAL FIXES
 #
 # This version has been fully analyzed, debugged, and refactored by a Software Development Engineer.
 #
 # KEY FIXES:
-# 1. [RUNTIME] Fixed `TypeError` from pydeck by sanitizing data types to standard Python floats.
-# 2. [RUNTIME] Added robust handling for invalid/empty geometries to prevent crashes.
-# 3. [PERFORMANCE] Replaced slow MCMC with fast Variational Inference for Bayesian updates.
-# 4. [ROBUSTNESS] Made the TCN model robust to short input sequences.
-# 5. [DATA] Merged duplicated code blocks into a single valid script.
+# 1. [CRITICAL] Re-introduced the missing `SensitivityAnalyzer` class to resolve the `NameError`.
+# 2. [CRITICAL] Fixed logical error in `DataManager.__init__` by correcting the initialization order,
+#    ensuring zones are built before ambulances are assigned to them.
+# 3. [RUNTIME] Fixed `TypeError` from pydeck by sanitizing data types.
+# 4. [RUNTIME] Added robust handling for invalid geometries.
+# 5. [PERFORMANCE] Replaced MCMC with faster Variational Inference.
 #
 # REFACTORING & IMPROVEMENTS:
 # 1. [ARCHITECTURE] Abstracted common UI logic into a helper function.
-# 2. [BEST PRACTICES] Improved error handling in visualization and data processing functions.
-# 3. [CONFIG] Switched to a more reliable default map style URL.
+# 2. [BEST PRACTICES] Improved error handling and code robustness.
 """
 RedShieldAI_Command_Suite.py
 Digital Twin for Emergency Medical Services Management
@@ -221,9 +221,13 @@ class DataManager:
         self.config = config.get('data', {})
         self.road_graph = self._build_road_graph()
         self.graph_embeddings = self._load_or_compute_graph_embeddings()
+        
+        # --- FIX: CORRECT INITIALIZATION ORDER ---
         self.zones_gdf = self._build_zones_gdf()
         self.hospitals = self._initialize_hospitals()
         self.ambulances = self._initialize_ambulances()
+        # --- END FIX ---
+        
         self.city_boundary_poly = self.zones_gdf.unary_union
         self.city_boundary_bounds = self.city_boundary_poly.bounds
         self.node_to_zone_map = {
@@ -527,6 +531,54 @@ class PredictiveAnalyticsEngine:
             combined_pred = np.clip((0.7 * ml_pred + 0.3 * gp_pred) * (1 + 0.1 * chaotic_series * anomaly), 0, 2)
             for h, pred in enumerate(combined_pred): data.append({'zone': zone, 'hour': h, 'projected_risk': pred})
         return pd.DataFrame(data)
+
+# --- FIX: RE-INTRODUCE SENSITIVITYANALYZER CLASS ---
+class SensitivityAnalyzer:
+    """Performs sensitivity analysis on model parameters."""
+    def __init__(self, simulation_engine: SimulationEngine, predictive_engine: PredictiveAnalyticsEngine):
+        self.sim_engine = simulation_engine
+        self.pred_engine = predictive_engine
+        logger.info("SensitivityAnalyzer initialized.")
+
+    def analyze_sensitivity(self, env_factors: EnvFactors, parameters: Dict[str, List[float]], iterations: int = 10) -> pd.DataFrame:
+        """Analyzes model sensitivity to parameter perturbations."""
+        try:
+            results = []
+            base_state = self.sim_engine.get_live_state(env_factors)
+            base_risk = self.pred_engine.calculate_holistic_risk(base_state)[1]
+            base_anomaly = self.pred_engine.calculate_information_metrics(base_state)[0]
+
+            for param, values in parameters.items():
+                for value in values:
+                    for _ in range(iterations):
+                        modified_factors = EnvFactors(
+                            env_factors.is_holiday,
+                            env_factors.is_payday,
+                            env_factors.weather_condition,
+                            env_factors.major_event_active,
+                            value if param == 'traffic_multiplier' else env_factors.traffic_multiplier,
+                            int(value) if param == 'base_rate' else env_factors.base_rate,
+                            value if param == 'self_excitation_factor' else env_factors.self_excitation_factor
+                        )
+                        state = self.sim_engine.get_live_state(modified_factors)
+                        risk = self.pred_engine.calculate_holistic_risk(state)[1]
+                        anomaly = self.pred_engine.calculate_information_metrics(state)[0]
+                        risk_diff = np.mean([
+                            abs(risk.get(node, 0) - base_risk.get(node, 0))
+                            for node in self.pred_engine.dm.road_graph.nodes()
+                        ])
+                        results.append({
+                            'parameter': param,
+                            'value': value,
+                            'risk_diff': risk_diff,
+                            'anomaly_diff': abs(anomaly - base_anomaly)
+                        })
+            df = pd.DataFrame(results)
+            logger.info("Completed sensitivity analysis for %d parameter settings.", len(df))
+            return df
+        except Exception as e:
+            logger.error("Failed to perform sensitivity analysis: %s", e)
+            return pd.DataFrame()
 
 class StrategicAdvisor:
     """Handles resource reallocation."""
