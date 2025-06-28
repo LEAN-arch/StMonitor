@@ -218,13 +218,13 @@ class DataManager:
 
     @st.cache_resource
     def _build_zones_gdf(_self) -> gpd.GeoDataFrame:
-        """Builds zones GeoDataFrame with vectorized operations and validation."""
+        """Builds zones GeoDataFrame with correct coordinate order and validation."""
         zones = _self.config.get('zones', {})
         if not zones:
             logger.error("No zones defined in config.")
             return gpd.GeoDataFrame()
         df = pd.DataFrame.from_dict(zones, orient='index')
-        geometry = [Polygon(p) if isinstance(p, list) and len(p) >= 3 else None for p in df['polygon']]
+        geometry = [Polygon([(lon, lat) for lat, lon in p]) if isinstance(p, list) and len(p) >= 3 else None for p in df['polygon']]
         gdf = gpd.GeoDataFrame(df, geometry=geometry, crs=GEOGRAPHIC_CRS).dropna(subset=['geometry'])
         gdf_projected = gdf.to_crs(PROJECTED_CRS)
         gdf['centroid'] = gdf_projected.geometry.centroid.to_crs(GEOGRAPHIC_CRS)
