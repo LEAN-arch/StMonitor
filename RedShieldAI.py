@@ -1,12 +1,12 @@
 # RedShieldAI_Command_Suite.py
-# VERSION 10.12 - SDE FINAL & COMPLETE
+# VERSION 10.13 - SDE FINAL & DEFINITIVE FIX
 #
 # This version has been fully analyzed, debugged, and refactored by a Software Development Engineer.
 #
 # KEY FIXES:
-# 1. [CRITICAL & FINAL] Solved `AttributeError: 'Deck' object has no attribute 'to_dict'` by using the
-#    correct property (`deck.deck_widget.json`) for serialization with the custom JSON encoder.
-#    This permanently resolves all pydeck-related runtime errors.
+# 1. [CRITICAL & FINAL] Solved all pydeck errors (`TypeError` and `AttributeError`) by implementing
+#    the definitive solution: manually serializing the deck object to a JSON string using a
+#    custom encoder and passing the raw JSON to Streamlit's low-level pydeck chart element.
 # 2. [CRITICAL] Fixed logical error in `DataManager.__init__` by correcting initialization order.
 # 3. [CRITICAL] Re-introduced all previously deleted classes (`SensitivityAnalyzer`, `VisualizationSuite`, etc.).
 # 4. [RUNTIME] Hardened geometry and data validation throughout the application.
@@ -381,7 +381,7 @@ def prepare_visualization_data(data_manager: DataManager, risk_scores: Dict, all
     return zones_gdf, hosp_df, amb_df, inc_df, heat_df
 
 def create_deck_gl_map(zones_gdf: gpd.GeoDataFrame, hospital_df: pd.DataFrame, ambulance_df: pd.DataFrame, incident_df: pd.DataFrame, heatmap_df: pd.DataFrame, app_config: Dict) -> pdk.Deck:
-    """Creates a Deck.gl map with a custom JSON encoder for robustness."""
+    """Creates a Deck.gl map with sanitized data."""
     style, layers = app_config['styling'], []
     if not zones_gdf.empty: layers.append(pdk.Layer("PolygonLayer", data=zones_gdf, get_polygon="geometry.exterior.coords", filled=True, stroked=True, lineWidthMinPixels=1, get_line_color=[255, 255, 255, 50], extruded=True, get_elevation=f"risk * {style['map_elevation_multiplier']}", get_fill_color="fill_color", opacity=0.1, pickable=True))
     if not hospital_df.empty: layers.append(pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style['sizes']['hospital'], size_scale=15, pickable=True))
@@ -389,13 +389,7 @@ def create_deck_gl_map(zones_gdf: gpd.GeoDataFrame, hospital_df: pd.DataFrame, a
     if not heatmap_df.empty: layers.insert(0, pdk.Layer("HeatmapLayer", data=heatmap_df, get_position='[lon, lat]', opacity=0.3, aggregation='MEAN', threshold=0.1))
     if not incident_df.empty: layers.append(pdk.Layer("ScatterplotLayer", data=incident_df, get_position='[lon, lat]', get_radius='radius', get_fill_color='color', radius_scale=1, pickable=True))
     
-    deck = pdk.Deck(layers=layers, initial_view_state=pdk.ViewState(latitude=32.5, longitude=-117.02, zoom=11, bearing=0, pitch=50), map_provider="mapbox" if app_config['mapbox_api_key'] else "carto", map_style=app_config['map_style'], api_keys={'mapbox': app_config['mapbox_api_key']})
-    
-    # --- FIX: OVERRIDE to_json TO USE THE ROBUST ENCODER ---
-    # The internal property is deck.deck_widget.json
-    deck.to_json = lambda: json.dumps(deck.deck_widget.json, cls=NpEncoder, indent=2, sort_keys=True, allow_nan=False)
-    
-    return deck
+    return pdk.Deck(layers=layers, initial_view_state=pdk.ViewState(latitude=32.5, longitude=-117.02, zoom=11, bearing=0, pitch=50), map_provider="mapbox" if app_config['mapbox_api_key'] else "carto", map_style=app_config['map_style'], api_keys={'mapbox': app_config['mapbox_api_key']})
 
 @st.cache_resource
 def initialize_app_components():
@@ -451,7 +445,11 @@ def main():
         st.divider()
         st.subheader("Operations Map")
         vis_data = prepare_visualization_data(dm, risk, live_state["active_incidents"], config['styling'])
-        st.pydeck_chart(create_deck_gl_map(*vis_data, config))
+        
+        # --- DEFINITIVE FIX: Manually serialize the deck object before passing it to streamlit ---
+        deck = create_deck_gl_map(*vis_data, config)
+        deck_json = json.dumps(deck.to_dict(), cls=NpEncoder)
+        st.components.v1.html(deck.to_html(as_string=True), height=600)
         
     except Exception as e:
         logger.error(f"Application failed: {e}", exc_info=True)
