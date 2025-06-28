@@ -1,6 +1,6 @@
 # RedShieldAI_Command_Suite.py
-# VERSION 10.15 - REVISED & OPTIMIZED
-
+# VERSION 10.20 - REFACTORED & PRODUCTION-READY
+"""
 RedShieldAI_Command_Suite.py
 Digital Twin for Emergency Medical Services Management
 """
@@ -10,6 +10,7 @@ import pandas as pd
 import numpy as np
 import geopandas as gpd
 from shapely.geometry import Point, Polygon
+from shapely.ops import unary_union
 from dataclasses import dataclass
 from typing import Dict, List, Any, Tuple
 import networkx as nx
@@ -24,23 +25,27 @@ from node2vec import Node2Vec
 import logging
 import pickle
 import warnings
-import pymc as pm
 import json
+import random
 
 # --- L0: CONFIGURATION & CONSTANTS ---
 PROJECTED_CRS = "EPSG:32611"
 GEOGRAPHIC_CRS = "EPSG:4326"
-DEFAULT_RESPONSE_TIME = 10.0
+DEFAULT_RESPONSE_TIME = 15.0
 CACHE_DIR = Path("cache")
 CACHE_DIR.mkdir(exist_ok=True)
+CONFIG_FILE = Path("config.json")
 FORECAST_HORIZONS = [3, 6, 12, 24, 72, 168]
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.StreamHandler(), logging.FileHandler("redshield_ai.log")])
 logger = logging.getLogger(__name__)
 
+# --- L1: DATA STRUCTURES & CONFIGURATION ---
+
 @dataclass(frozen=True)
 class EnvFactors:
+    """Dataclass to hold environmental factors for the simulation."""
     is_holiday: bool
     is_payday: bool
     weather_condition: str
@@ -49,118 +54,47 @@ class EnvFactors:
     base_rate: int
     self_excitation_factor: float
 
+@st.cache_data(ttl=3600)  # Cache config for an hour
 def get_app_config() -> Dict[str, Any]:
-    """Returns validated application configuration."""
-    mapbox_key = os.environ.get("MAPBOX_API_KEY", st.secrets.get("MAPBOX_API_KEY", "pk.eyJ1IjoiamJhdXRpc3RhbXNjIiwiYSI6ImNtY2cwMHczajBlcDMybHBxOWxnYjRhNHAifQ.ije8mC_e__Rl50iRA8c01g"))
-    map_style = "mapbox://styles/mapbox/dark-v10" if mapbox_key else "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+    """Loads, validates, and returns application configuration from a JSON file."""
+    if not CONFIG_FILE.exists():
+        st.error(f"FATAL: Configuration file not found at '{CONFIG_FILE}'. Please create it.")
+        logger.error(f"Configuration file not found at '{CONFIG_FILE}'.")
+        st.stop()
+    
+    with open(CONFIG_FILE, 'r') as f:
+        config = json.load(f)
+
+    # Validate Mapbox key and set fallback
+    mapbox_key = os.environ.get("MAPBOX_API_KEY", config.get("mapbox_api_key", ""))
     if not mapbox_key:
         logger.warning("Mapbox API key not found. Using default Carto map style.")
-    config = {
-        'mapbox_api_key': mapbox_key,
-        'map_style': map_style,
-        'data': {
-            'hospitals': {
-                "Hospital General": {'location': [32.5295, -117.0182], 'capacity': 100, 'load': 85},
-                "IMSS Clínica 1": {'location': [32.5121, -117.0145], 'capacity': 120, 'load': 70},
-                "Angeles": {'location': [32.5300, -117.0200], 'capacity': 100, 'load': 95},
-                "Cruz Roja (Hospital)": {'location': [32.5283, -117.0255], 'capacity': 80, 'load': 60}
-            },
-            'ambulances': {
-                "A01": {'status': "Disponible", 'home_base': 'Playas'},
-                "A02": {'status': "Disponible", 'home_base': 'Otay'},
-                "A03": {'status': "En Misión", 'home_base': 'La Mesa'},
-                "A04": {'status': "Disponible", 'home_base': 'Centro'},
-                "A05": {'status': "Disponible", 'home_base': 'El Dorado'},
-                "A06": {'status': "Disponible", 'home_base': 'Santa Fe'}
-            },
-            'zones': {
-                "Centro": {'polygon': [[32.52, -117.03], [32.54, -117.03], [32.54, -117.05], [32.52, -117.05]], 'prior_risk': 0.7, 'node': 'N_Centro'},
-                "Otay": {'polygon': [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]], 'prior_risk': 0.4, 'node': 'N_Otay'},
-                "Playas": {'polygon': [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]], 'prior_risk': 0.3, 'node': 'N_Playas'},
-                "La Mesa": {'polygon': [[32.50, -117.00], [32.52, -117.00], [32.52, -117.02], [32.50, -117.02]], 'prior_risk': 0.5, 'node': 'N_LaMesa'},
-                "Santa Fe": {'polygon': [[32.45, -117.02], [32.47, -117.02], [32.47, -117.04], [32.45, -117.04]], 'prior_risk': 0.5, 'node': 'N_SantaFe'},
-                "El Dorado": {'polygon': [[32.48, -116.96], [32.50, -116.96], [32.50, -116.98], [32.48, -116.98]], 'prior_risk': 0.4, 'node': 'N_ElDorado'}
-            },
-            'distributions': {
-                'incident_type': {'Traumatismo': 0.43, 'Enfermedad': 0.57},
-                'triage': {'Rojo': 0.033, 'Amarillo': 0.195, 'Verde': 0.772},
-                'zone': {'Centro': 0.25, 'Otay': 0.14, 'Playas': 0.11, 'La Mesa': 0.18, 'Santa Fe': 0.18, 'El Dorado': 0.14}
-            },
-            'road_network': {
-                'nodes': {
-                    "N_Centro": {'pos': [32.53, -117.04]},
-                    "N_Otay": {'pos': [32.535, -116.965]},
-                    "N_Playas": {'pos': [32.52, -117.12]},
-                    "N_LaMesa": {'pos': [32.51, -117.01]},
-                    "N_SantaFe": {'pos': [32.46, -117.03]},
-                    "N_ElDorado": {'pos': [32.49, -116.97]}
-                },
-                'edges': [
-                    ["N_Centro", "N_LaMesa", 5],
-                    ["N_Centro", "N_Playas", 12],
-                    ["N_LaMesa", "N_Otay", 10],
-                    ["N_LaMesa", "N_SantaFe", 8],
-                    ["N_Otay", "N_ElDorado", 6]
-                ]
-            }
-        },
-        'model_params': {
-            'risk_diffusion_factor': 0.1,
-            'risk_diffusion_steps': 3,
-            'risk_weights': {'prior': 0.4, 'traffic': 0.3, 'incidents': 0.3},
-            'incident_load_factor': 0.25,
-            'response_time_turnout_penalty': 3.0,
-            'recommendation_deficit_threshold': 1.0,
-            'recommendation_improvement_threshold': 1.0,
-            'hawkes_intensity': 0.2
-        },
-        'simulation_params': {
-            'multipliers': {'holiday': 1.5, 'payday': 1.3, 'rain': 1.2, 'major_event': 2.0}
-        },
-        'styling': {
-            'colors': {
-                'primary': '#00A9FF',
-                'secondary': '#DC3545',
-                'accent_ok': '#00B359',
-                'accent_warn': '#FFB000',
-                'accent_crit': '#DC3545',
-                'background': '#0D1117',
-                'text': '#FFFFFF',
-                'hawkes_echo': [255, 107, 107, 150],
-                'chaos_high': [200, 50, 50, 200],
-                'chaos_low': [50, 200, 50, 100]
-            },
-            'sizes': {
-                'ambulance': 3.5,
-                'hospital': 4.0,
-                'incident_base': 100.0,
-                'hawkes_echo': 50.0
-            },
-            'icons': {
-                'hospital': "https://img.icons8.com/color/96/hospital-3.png",
-                'ambulance': "https://img.icons8.com/color/96/ambulance.png"
-            },
-            'map_elevation_multiplier': 5000.0
-        }
-    }
+        config['map_style'] = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+    config['mapbox_api_key'] = mapbox_key
+
+    # Validate required sections
     required_sections = ['data', 'model_params', 'simulation_params', 'styling']
     for section in required_sections:
         if section not in config or not config[section]:
-            raise ValueError(f"Configuration section '{section}' is missing or empty.")
+            raise ValueError(f"Configuration section '{section}' is missing or empty in {CONFIG_FILE}.")
     return config
 
 def _normalize_dist(dist: Dict[str, float]) -> Dict[str, float]:
+    """Normalizes a dictionary of probabilities to sum to 1."""
     if not isinstance(dist, dict):
         logger.error("Distribution must be a dictionary.")
         return {}
     total = sum(v for v in dist.values() if isinstance(v, (int, float)) and v >= 0)
     if total <= 0:
-        logger.warning("Invalid or zero-sum distribution encountered.")
-        return {k: 0.0 for k in dist}
+        logger.warning("Invalid or zero-sum distribution encountered. Returning uniform distribution.")
+        num_items = len(dist)
+        return {k: 1.0 / num_items for k in dist} if num_items > 0 else {}
     return {k: v / total for k, v in dist.items()}
 
+# --- L2: CORE APPLICATION MODULES ---
+
 class DataManager:
-    """Manages static data assets with optimized geospatial operations."""
+    """Manages all static and geospatial data assets with optimized, cached operations."""
     def __init__(self, config: Dict[str, Any]):
         self.config = config.get('data', {})
         self.road_graph = self._build_road_graph()
@@ -169,31 +103,25 @@ class DataManager:
         self.hospitals = self._initialize_hospitals()
         self.ambulances = self._initialize_ambulances()
         self.city_boundary_poly = self.zones_gdf.unary_union if not self.zones_gdf.empty else None
-        self.city_boundary_bounds = self.city_boundary_poly.bounds if self.city_boundary_poly else (0, 0, 0, 0)
         self.node_to_zone_map = {data['node']: name for name, data in self.zones_gdf.iterrows() if 'node' in data and pd.notna(data['node'])}
-        self.prior_history = self._initialize_prior_history()
         logger.info(f"DataManager initialized with {len(self.zones_gdf)} zones, {len(self.hospitals)} hospitals, {len(self.ambulances)} ambulances.")
 
+    # Note on _self: In Streamlit, caching instance methods requires a hashable 'self'.
+    # The '_self' argument is a common, effective pattern to pass the instance for caching.
     @st.cache_resource
     def _build_road_graph(_self) -> nx.Graph:
+        """Builds and caches the NetworkX road graph from config."""
         G = nx.Graph()
         network_config = _self.config.get('road_network', {})
-        nodes = network_config.get('nodes', {})
-        edges = network_config.get('edges', [])
-        for node, data in nodes.items():
-            if 'pos' in data and isinstance(data['pos'], list) and len(data['pos']) == 2:
-                G.add_node(node, pos=data['pos'])
-            else:
-                logger.warning(f"Invalid node data for {node}")
-        for edge in edges:
-            if len(edge) == 3 and all(isinstance(e, str) for e in edge[:2]) and isinstance(edge[2], (int, float)):
-                G.add_edge(edge[0], edge[1], weight=edge[2])
-            else:
-                logger.warning(f"Invalid edge data: {edge}")
+        for node, data in network_config.get('nodes', {}).items():
+            G.add_node(node, pos=data['pos'])
+        for u, v, weight in network_config.get('edges', []):
+            G.add_edge(u, v, weight=float(weight))
         return G
 
     @st.cache_resource
     def _load_or_compute_graph_embeddings(_self) -> Dict[str, np.ndarray]:
+        """Loads graph node embeddings from cache or computes them if not present."""
         cache_file = CACHE_DIR / "graph_embeddings.pkl"
         if cache_file.exists():
             try:
@@ -201,10 +129,9 @@ class DataManager:
                     return pickle.load(f)
             except Exception as e:
                 logger.warning(f"Failed to load cached embeddings: {e}. Recomputing.")
-        if not _self.road_graph.nodes:
-            logger.warning("No nodes in road graph for embeddings.")
-            return {}
-        node2vec = Node2Vec(_self.road_graph, dimensions=8, walk_length=5, num_walks=20, workers=2, quiet=True)
+        
+        if not _self.road_graph.nodes: return {}
+        node2vec = Node2Vec(_self.road_graph, dimensions=8, walk_length=10, num_walks=50, workers=4, quiet=True)
         model = node2vec.fit(window=5, min_count=1, batch_words=4)
         embeddings = {node: model.wv[node] for node in _self.road_graph.nodes()}
         with open(cache_file, 'wb') as f:
@@ -213,436 +140,594 @@ class DataManager:
 
     @st.cache_resource
     def _build_zones_gdf(_self) -> gpd.GeoDataFrame:
+        """Builds and caches the GeoDataFrame for city zones."""
         zones = _self.config.get('zones', {})
-        if not zones:
-            logger.error("No zones defined in config.")
-            return gpd.GeoDataFrame()
         valid_zones = []
         for name, data in zones.items():
-            polygon = data.get('polygon')
-            if isinstance(polygon, list) and len(polygon) >= 3:
-                try:
-                    poly = Polygon([(lon, lat) for lat, lon in polygon])
-                    if not poly.is_valid:
-                        poly = poly.buffer(0)
-                    if not poly.is_empty:
-                        data['name'] = name
-                        data['geometry'] = poly
-                        valid_zones.append(data)
-                except Exception as e:
-                    logger.warning(f"Invalid polygon for zone '{name}': {e}")
-        if not valid_zones:
-            logger.error("No valid zones found.")
-            return gpd.GeoDataFrame()
+            try:
+                poly = Polygon([(lon, lat) for lat, lon in data['polygon']]).buffer(0)
+                if not poly.is_empty:
+                    data['name'] = name
+                    data['geometry'] = poly
+                    valid_zones.append(data)
+            except Exception as e:
+                logger.warning(f"Skipping invalid polygon for zone '{name}': {e}")
+        
+        if not valid_zones: return gpd.GeoDataFrame()
         gdf = gpd.GeoDataFrame(valid_zones, crs=GEOGRAPHIC_CRS).set_index('name')
-        gdf_projected = gdf.to_crs(PROJECTED_CRS)
-        gdf['centroid'] = gdf_projected.geometry.centroid.to_crs(GEOGRAPHIC_CRS)
-        graph_nodes_gdf = gpd.GeoDataFrame(geometry=[Point(d['pos'][1], d['pos'][0]) for _, d in _self.road_graph.nodes(data=True)], index=list(_self.road_graph.nodes()), crs=GEOGRAPHIC_CRS).to_crs(PROJECTED_CRS)
-        left_gdf = gdf[['geometry']].reset_index().rename(columns={'name': 'zone_name'})
-        right_gdf = graph_nodes_gdf[['geometry']].reset_index().rename(columns={'index': 'node_name'})
-        nearest = gpd.sjoin_nearest(left_gdf, right_gdf, how='left', distance_col='distance').drop_duplicates(subset='zone_name').set_index('zone_name')
-        gdf['nearest_node'] = gdf.index.map(nearest['node_name'])
+        gdf['centroid'] = gdf.to_crs(PROJECTED_CRS).geometry.centroid.to_crs(GEOGRAPHIC_CRS)
+        
+        # Associate zones with nearest road graph nodes
+        graph_nodes_gdf = gpd.GeoDataFrame(
+            geometry=[Point(d['pos'][1], d['pos'][0]) for _, d in _self.road_graph.nodes(data=True)],
+            index=list(_self.road_graph.nodes()), crs=GEOGRAPHIC_CRS
+        )
+        nearest = gpd.sjoin_nearest(gdf, graph_nodes_gdf, how='left', distance_col='distance')
+        gdf['nearest_node'] = nearest.groupby(nearest.index)['index_right'].first()
         return gdf.drop(columns=['polygon'], errors='ignore')
 
     def _initialize_hospitals(self) -> Dict:
-        hospitals = {}
-        for name, data in self.config.get('hospitals', {}).items():
-            location = data.get('location')
-            if isinstance(location, list) and len(location) == 2:
-                hospitals[name] = {**data, 'location': Point(location[1], location[0])}
-            else:
-                logger.warning(f"Invalid location for hospital '{name}'")
-        return hospitals
+        """Initializes hospital data from config."""
+        return {name: {**data, 'location': Point(data['location'][1], data['location'][0])}
+                for name, data in self.config.get('hospitals', {}).items()}
 
     def _initialize_ambulances(self) -> Dict:
+        """Initializes ambulance data, placing them at their home base centroids."""
         ambulances = {}
         for amb_id, amb_data in self.config.get('ambulances', {}).items():
             home_zone = amb_data.get('home_base')
             if home_zone in self.zones_gdf.index:
                 zone_info = self.zones_gdf.loc[home_zone]
-                if zone_info.centroid and not zone_info.centroid.is_empty:
-                    ambulances[amb_id] = {'id': amb_id, **amb_data, 'location': zone_info.centroid, 'nearest_node': zone_info.nearest_node}
-                else:
-                    logger.warning(f"Invalid centroid for zone '{home_zone}'")
+                ambulances[amb_id] = {'id': amb_id, **amb_data, 'location': zone_info.centroid, 'nearest_node': zone_info.nearest_node}
             else:
-                logger.warning(f"Invalid home base '{home_zone}' for ambulance '{amb_id}'")
+                logger.warning(f"Invalid home base '{home_zone}' for ambulance '{amb_id}'.")
         return ambulances
 
-    def _initialize_prior_history(self) -> Dict:
-        return {zone: {'mean_risk': data.get('prior_risk', 0.5), 'count': 1, 'variance': 0.1} for zone, data in self.zones_gdf.iterrows()}
-
-    def assign_zones_to_incidents(self, incidents_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-        if incidents_gdf.empty or self.zones_gdf.empty:
-            return incidents_gdf.assign(zone=None)
-        return incidents_gdf.sjoin(self.zones_gdf[['geometry']], how="left", predicate="intersects").drop(columns='index_right', errors='ignore')
+    def assign_zone_to_point(self, point: Point) -> str:
+        """Finds which zone a given point falls into."""
+        for name, row in self.zones_gdf.iterrows():
+            if row.geometry.contains(point):
+                return name
+        return None
 
 class SimulationEngine:
-    """Generates synthetic incident data."""
+    """Generates synthetic incident data based on configurable environmental factors."""
     def __init__(self, data_manager: DataManager, sim_params: Dict, distributions: Dict):
         self.dm = data_manager
         self.sim_params = sim_params
         self.dist = distributions
-        self.nhpp_intensity = lambda t: 0.1 + 0.05 * np.sin(t / 24 * 2 * np.pi)
+        self.nhpp_intensity = lambda t: 1 + 0.5 * np.sin((t / 24) * 2 * np.pi)
 
-    @st.cache_data(ttl=60)
-    def get_live_state(_self, env_factors: EnvFactors, time_hour: float = 0.0) -> Dict[str, Any]:
-        mult = _self.sim_params.get('multipliers', {})
-        intensity = _self.nhpp_intensity(time_hour) * float(max(1, env_factors.base_rate))
-        if env_factors.is_holiday:
-            intensity *= mult.get('holiday', 1.0)
-        if env_factors.is_payday:
-            intensity *= mult.get('payday', 1.0)
-        if env_factors.weather_condition.lower() == 'rain':
-            intensity *= mult.get('rain', 1.0)
-        if env_factors.major_event_active:
-            intensity *= mult.get('major_event', 1.0)
-        
+    def _generate_random_point_in_polygon(self, polygon: Polygon) -> Point:
+        """Generates a random point guaranteed to be within a given polygon."""
+        min_x, min_y, max_x, max_y = polygon.bounds
+        while True:
+            p = Point(random.uniform(min_x, max_x), random.uniform(min_y, max_y))
+            if polygon.contains(p):
+                return p
+
+    def get_live_state(self, env_factors: EnvFactors, time_hour: float = 0.0) -> Dict[str, Any]:
+        """
+        Generates a snapshot of the city's state, including new incidents and traffic.
+        This version generates incidents realistically within zone polygons.
+        """
+        mult = self.sim_params.get('multipliers', {})
+        intensity = self.nhpp_intensity(time_hour) * float(env_factors.base_rate)
+        intensity *= mult.get('holiday', 1.0) if env_factors.is_holiday else 1.0
+        intensity *= mult.get('payday', 1.0) if env_factors.is_payday else 1.0
+        intensity *= mult.get(env_factors.weather_condition.lower(), 1.0)
+        intensity *= mult.get('major_event', 1.0) if env_factors.major_event_active else 1.0
+
         num_incidents = max(0, int(np.random.poisson(intensity)))
-        if num_incidents == 0 or not _self.dm.city_boundary_poly:
+        if num_incidents == 0 or self.dm.zones_gdf.empty:
             return {"active_incidents": [], "traffic_conditions": {}, "system_state": "Normal"}
+
+        # Generate incidents based on zone probability distribution
+        incident_zones = np.random.choice(
+            list(self.dist['zone'].keys()),
+            num_incidents,
+            p=list(self.dist['zone'].values())
+        )
         
-        incidents_gdf = gpd.GeoDataFrame(
-            {'type': np.random.choice(list(_self.dist['incident_type'].keys()), num_incidents, p=list(_self.dist['incident_type'].values())),
-             'triage': np.random.choice(list(_self.dist['triage'].keys()), num_incidents, p=list(_self.dist['triage'].values())),
-             'is_echo': False, 'timestamp': time_hour},
-            geometry=gpd.points_from_xy(x=np.random.uniform(_self.dm.city_boundary_bounds[0], _self.dm.city_boundary_bounds[2], num_incidents),
-                                        y=np.random.uniform(_self.dm.city_boundary_bounds[1], _self.dm.city_boundary_bounds[3], num_incidents)), crs=GEOGRAPHIC_CRS)
-        
-        incidents_gdf = incidents_gdf[incidents_gdf.within(_self.dm.city_boundary_poly)].reset_index(drop=True)
-        if incidents_gdf.empty:
-            return {"active_incidents": [], "traffic_conditions": {}, "system_state": "Normal"}
-        
-        incidents_gdf['id'] = [f"{row.type[0]}-{idx}" for idx, row in incidents_gdf.iterrows()]
-        incidents_gdf = _self.dm.assign_zones_to_incidents(incidents_gdf)
-        
-        incidents_list = [{'location': row.geometry, **row.drop('geometry').to_dict()} for _, row in incidents_gdf.iterrows() if not row.geometry.is_empty]
-        
-        triggers = incidents_gdf[incidents_gdf['triage'] == 'Rojo']
+        incidents = []
+        for i, zone_name in enumerate(incident_zones):
+            zone_polygon = self.dm.zones_gdf.loc[zone_name].geometry
+            location = self._generate_random_point_in_polygon(zone_polygon)
+            incident = {
+                'id': f"INC-{int(time_hour*100)}-{i}",
+                'type': np.random.choice(list(self.dist['incident_type'].keys()), p=list(self.dist['incident_type'].values())),
+                'triage': np.random.choice(list(self.dist['triage'].keys()), p=list(self.dist['triage'].values())),
+                'is_echo': False,
+                'timestamp': time_hour,
+                'location': location,
+                'zone': zone_name
+            }
+            incidents.append(incident)
+
+        # Simplified Hawkes Process: High-severity incidents can trigger "echo" events.
         echo_data = []
-        for _, trigger in triggers.iterrows():
+        triggers = [inc for inc in incidents if inc['triage'] == 'Rojo']
+        for trigger in triggers:
             if np.random.rand() < env_factors.self_excitation_factor:
                 for j in range(np.random.randint(1, 3)):
-                    echo_loc = Point(trigger.geometry.x + np.random.normal(0, 0.005), trigger.geometry.y + np.random.normal(0, 0.005))
-                    if _self.dm.city_boundary_poly.contains(echo_loc):
-                        echo_data.append({'id': f"ECHO-{trigger.name}-{j}", 'type': "Echo", 'triage': "Verde", 'location': echo_loc, 'is_echo': True, 'zone': trigger.zone, 'timestamp': time_hour})
+                    echo_loc = Point(trigger['location'].x + np.random.normal(0, 0.005), trigger['location'].y + np.random.normal(0, 0.005))
+                    echo_zone = self.dm.assign_zone_to_point(echo_loc)
+                    if echo_zone:
+                        echo_data.append({'id': f"ECHO-{trigger['id']}-{j}", 'type': "Echo", 'triage': "Verde", 'location': echo_loc, 'is_echo': True, 'zone': echo_zone, 'timestamp': time_hour})
+
+        traffic_conditions = {z: min(1.0, env_factors.traffic_multiplier * np.random.uniform(0.3, 1.0)) for z in self.dm.zones_gdf.index}
+        all_incidents = incidents + echo_data
+        system_state = "Anomalous" if len(all_incidents) > 10 or any(t['triage'] == 'Rojo' for t in all_incidents) else "Elevated" if len(all_incidents) > 5 else "Normal"
         
-        traffic_conditions = {z: min(1.0, env_factors.traffic_multiplier * np.random.uniform(0.3, 1.0)) for z in _self.dm.zones_gdf.index}
-        system_state = "Anomalous" if len(incidents_list) > 10 or any(t['triage'] == 'Rojo' for t in incidents_list) else "Elevated" if len(incidents_list) > 5 else "Normal"
-        
-        return {"active_incidents": incidents_list + echo_data, "traffic_conditions": traffic_conditions, "system_state": system_state}
+        return {"active_incidents": all_incidents, "traffic_conditions": traffic_conditions, "system_state": system_state}
 
 class PredictiveAnalyticsEngine:
-    """Handles forecasting and analytics with machine learning models."""
+    """Handles forecasting, risk calculation, and analytics with ML models."""
     def __init__(self, data_manager: DataManager, model_params: Dict, dist_config: Dict):
         self.dm = data_manager
         self.params = model_params
         self.dist = dist_config
         self.ml_models = {z: GradientBoostingRegressor(n_estimators=50, random_state=42) for z in self.dm.zones_gdf.index}
-        self.gp_models = {z: GaussianProcessRegressor(kernel=C(1.0) * RBF(10), random_state=42) for z in self.dm.zones_gdf.index}
-        self._train_models()
+        self.gp_models = {z: GaussianProcessRegressor(kernel=C(1.0) * RBF(10), n_restarts_optimizer=5, random_state=42) for z in self.dm.zones_gdf.index}
+        self._train_models_on_synthetic_data()
 
-    def _train_models(self):
+    def _train_models_on_synthetic_data(self):
+        """
+        Trains ML models on synthetic data.
+        NOTE: In a real-world scenario, this function would load and train on historical incident data.
+        """
         np.random.seed(42)
-        hours = np.arange(24)
+        hours = np.arange(72)  # Use a longer time series for better training
+        nhpp_intensity = lambda t: 1 + 0.5 * np.sin((t / 24) * 2 * np.pi)
+
         for zone in self.dm.zones_gdf.index:
-            node = self.dm.zones_gdf.loc[zone, 'node']
+            node = self.dm.zones_gdf.loc[zone, 'nearest_node']
             embedding = self.dm.graph_embeddings.get(node, np.zeros(8))
-            X = np.hstack([np.array([[h, np.random.uniform(0.3, 1.0), np.random.randint(0, 5)] for h in hours]), np.tile(embedding, (len(hours), 1))])
-            y = np.random.uniform(0.1, 1.0, 24) * (1 + 0.5 * np.sin(hours / 24 * 2 * np.pi))
+            
+            # Create more realistic features
+            traffic_sim = np.random.uniform(0.3, 1.0, len(hours)) * (1 + 0.2 * np.sin((hours/12)*np.pi))
+            prior_risk_sim = np.full_like(hours, self.dist['zone'].get(zone, 0.1))
+            
+            X = np.hstack([
+                hours.reshape(-1, 1),
+                traffic_sim.reshape(-1, 1),
+                prior_risk_sim.reshape(-1, 1),
+                np.tile(embedding, (len(hours), 1))
+            ])
+            # Target variable y is based on the simulation's own intensity function + noise
+            y = (nhpp_intensity(hours) * prior_risk_sim * traffic_sim) + np.random.normal(0, 0.1, len(hours))
+            
             self.ml_models[zone].fit(X, y)
             self.gp_models[zone].fit(X, y)
 
-    def calculate_holistic_risk(self, live_state: Dict) -> Tuple[Dict, Dict]:
-        prior_risks = {k: v.get('prior_risk', 0.5) for k, v in self.dm.config.get('zones', {}).items()}
+    def calculate_holistic_risk(self, live_state: Dict, prior_risks: Dict) -> Dict:
+        """Calculates and diffuses risk across the city graph."""
         df = pd.DataFrame(live_state.get("active_incidents", []))
         counts = df.groupby('zone').size() if not df.empty else pd.Series(dtype=int)
+        
         w = self.params['risk_weights']
         inc_load_factor = self.params.get('incident_load_factor', 0.25)
-        evidence_risk = {zone: (data.get('prior_risk', 0.5) * w['prior'] + live_state.get('traffic_conditions', {}).get(zone, 0.5) * w['traffic'] + counts.get(zone, 0) * inc_load_factor * w['incidents']) for zone, data in self.dm.config.get('zones', {}).items()}
-        node_risks = {data['node']: evidence_risk.get(zone, 0) for zone, data in self.dm.config.get('zones', {}).items() if 'node' in data}
-        return prior_risks, self._diffuse_risk_on_graph(node_risks)
+
+        # Calculate evidence-based risk for each zone
+        evidence_risk = {
+            zone: (prior_risks.get(zone, 0.5) * w['prior'] + 
+                   live_state.get('traffic_conditions', {}).get(zone, 0.5) * w['traffic'] + 
+                   counts.get(zone, 0) * inc_load_factor * w['incidents'])
+            for zone in self.dm.zones_gdf.index
+        }
+        
+        # Map zone risk to graph nodes and diffuse
+        node_risks = {self.dm.zones_gdf.loc[zone, 'nearest_node']: risk for zone, risk in evidence_risk.items()}
+        return self._diffuse_risk_on_graph(node_risks)
 
     def _diffuse_risk_on_graph(self, initial_risks: Dict[str, float]) -> Dict[str, float]:
+        """Spreads risk scores across the road network using graph Laplacian."""
         graph = self.dm.road_graph
-        if not graph.nodes:
-            return initial_risks
-        L = nx.laplacian_matrix(graph).toarray()
-        risks = np.array([initial_risks.get(node, 0) for node in graph.nodes()])
+        if not graph.nodes or not initial_risks: return {}
+        
+        L = nx.normalized_laplacian_matrix(graph).toarray()
+        node_order = list(graph.nodes())
+        risks = np.array([initial_risks.get(node, 0) for node in node_order])
+        
         for _ in range(self.params.get('risk_diffusion_steps', 3)):
-            risks = risks - self.params.get('risk_diffusion_factor', 0.1) * L @ risks
-        return {node: max(0, float(r)) for node, r in zip(graph.nodes(), risks)}
+            risks = risks - self.params.get('risk_diffusion_factor', 0.1) * (L @ risks)
+            
+        return {node: max(0, float(r)) for node, r in zip(node_order, risks)}
 
     def calculate_information_metrics(self, live_state: Dict) -> Tuple[float, float, Dict, Dict, float]:
+        """Calculates KL Divergence, Shannon Entropy, and Mutual Information."""
         hist = self.dist['zone']
         df = pd.DataFrame([i for i in live_state.get("active_incidents", []) if not i.get("is_echo", False)])
+        
         if df.empty or 'zone' not in df.columns or df['zone'].isnull().all():
             return 0.0, 0.0, hist, {z: 0.0 for z in self.dm.zones_gdf.index}, 0.0
+            
         counts = df.groupby('zone').size()
         total = len(df)
         current = {z: counts.get(z, 0) / total for z in self.dm.zones_gdf.index}
         epsilon = 1e-9
+        
         kl_divergence = sum(p * np.log((p + epsilon) / (hist.get(z, 0) + epsilon)) for z, p in current.items() if p > 0)
         shannon_entropy = -sum(p * np.log2(p + epsilon) for p in current.values() if p > 0)
+        
         mutual_info = 0.0
         if 'type' in df.columns and not df.dropna(subset=['zone', 'type']).empty:
-            joint = df.groupby(['zone', 'type']).size().unstack(fill_value=0) / total
-            type_marginal = joint.sum(axis=0)
-            zone_marginal = joint.sum(axis=1)
-            if not type_marginal.empty and not zone_marginal.empty:
-                valid_zones = joint.index.intersection(zone_marginal.index)
-                valid_types = joint.columns.intersection(type_marginal.index)
-                mutual_info = sum(joint.loc[z, t] * np.log2((joint.loc[z, t] + epsilon) / (zone_marginal.get(z, 0) * type_marginal.get(t, 0) + epsilon)) for z in valid_zones for t in valid_types if joint.loc[z, t] > 0)
+            joint = pd.crosstab(df['zone'], df['type'], normalize=True)
+            p_z = joint.sum(axis=1)
+            p_t = joint.sum(axis=0)
+            for z in joint.index:
+                for t in joint.columns:
+                    if joint.loc[z, t] > 0:
+                        mutual_info += joint.loc[z, t] * np.log2(joint.loc[z, t] / (p_z[z] * p_t[t]))
+                        
         return kl_divergence, shannon_entropy, hist, current, mutual_info
 
-    def forecast_risk_over_time(self, risk_scores: Dict, anomaly: float, horizon: int) -> pd.DataFrame:
+    def forecast_risk_over_time(self, anomaly: float, horizon: int) -> pd.DataFrame:
+        """Forecasts risk for future hours using trained ML models."""
         data = []
         for zone in self.dm.zones_gdf.index:
-            node = self.dm.zones_gdf.loc[zone, 'node']
+            node = self.dm.zones_gdf.loc[zone, 'nearest_node']
             embedding = self.dm.graph_embeddings.get(node, np.zeros(8))
-            X = np.hstack([np.array([[h, np.random.uniform(0.3, 1.0), np.random.randint(0, 5)] for h in range(horizon)]), np.tile(embedding, (horizon, 1))])
+            
+            hours = np.arange(horizon)
+            traffic_sim = np.random.uniform(0.3, 1.0, horizon)
+            prior_risk_sim = np.full(horizon, self.dist['zone'].get(zone, 0.1))
+            
+            X = np.hstack([
+                hours.reshape(-1, 1),
+                traffic_sim.reshape(-1, 1),
+                prior_risk_sim.reshape(-1, 1),
+                np.tile(embedding, (horizon, 1))
+            ])
+            
             ml_pred = self.ml_models[zone].predict(X)
             gp_pred, _ = self.gp_models[zone].predict(X, return_std=True)
-            combined_pred = np.clip((0.7 * ml_pred + 0.3 * gp_pred) * (1 + 0.1 * anomaly), 0, 2)
+            combined_pred = np.clip((0.7 * ml_pred + 0.3 * gp_pred) * (1 + 0.2 * anomaly), 0, 2)
+            
             for h, pred in enumerate(combined_pred):
                 data.append({'zone': zone, 'hour': h, 'projected_risk': float(pred)})
         return pd.DataFrame(data)
 
 class SensitivityAnalyzer:
-    """Performs sensitivity analysis on model parameters."""
+    """Performs sensitivity analysis on simulation parameters."""
     def __init__(self, simulation_engine: SimulationEngine, predictive_engine: PredictiveAnalyticsEngine):
         self.sim_engine = simulation_engine
         self.pred_engine = predictive_engine
         logger.info("SensitivityAnalyzer initialized.")
 
-    def analyze_sensitivity(self, env_factors: EnvFactors, parameters: Dict[str, List[float]], iterations: int = 10) -> pd.DataFrame:
-        """Analyzes sensitivity to parameter changes."""
+    @st.cache_data(ttl=600)
+    def analyze_sensitivity(_self, base_env_factors: EnvFactors, parameters_to_test: Dict[str, List[float]], iterations: int = 5) -> pd.DataFrame:
+        """Analyzes sensitivity to parameter changes by measuring output variance."""
         results = []
-        base_state = self.sim_engine.get_live_state(env_factors)
-        base_risk = self.pred_engine.calculate_holistic_risk(base_state)[1]
-        base_anomaly = self.pred_engine.calculate_information_metrics(base_state)[0]
+        # Calculate baseline metrics
+        base_state = _self.sim_engine.get_live_state(base_env_factors)
+        base_risk = _self.pred_engine.calculate_holistic_risk(base_state, _self.pred_engine.dist['zone'])[1]
+        base_anomaly = _self.pred_engine.calculate_information_metrics(base_state)[0]
         
-        for param, values in parameters.items():
+        for param, values in parameters_to_test.items():
             for value in values:
+                param_risks, param_anomalies = [], []
                 for _ in range(iterations):
-                    modified_factors = EnvFactors(
-                        env_factors.is_holiday,
-                        env_factors.is_payday,
-                        env_factors.weather_condition,
-                        env_factors.major_event_active,
-                        value if param == 'traffic_multiplier' else env_factors.traffic_multiplier,
-                        int(value) if param == 'base_rate' else env_factors.base_rate,
-                        value if param == 'self_excitation_factor' else env_factors.self_excitation_factor
-                    )
-                    state = self.sim_engine.get_live_state(modified_factors)
-                    risk = self.pred_engine.calculate_holistic_risk(state)[1]
-                    anomaly = self.pred_engine.calculate_information_metrics(state)[0]
-                    risk_diff = np.mean([abs(risk.get(node, 0) - base_risk.get(node, 0)) for node in self.pred_engine.dm.road_graph.nodes()])
-                    results.append({'parameter': param, 'value': value, 'risk_diff': risk_diff, 'anomaly_diff': abs(anomaly - base_anomaly)})
+                    modified_factors_dict = base_env_factors.__dict__.copy()
+                    modified_factors_dict[param] = value
+                    modified_factors = EnvFactors(**modified_factors_dict)
+                    
+                    state = _self.sim_engine.get_live_state(modified_factors)
+                    # Use static prior for fair comparison across runs
+                    risk, _ = _self.pred_engine.calculate_holistic_risk(state, _self.pred_engine.dist['zone'])
+                    anomaly = _self.pred_engine.calculate_information_metrics(state)[0]
+                    
+                    param_risks.append(np.mean(list(risk.values())))
+                    param_anomalies.append(anomaly)
+                
+                results.append({
+                    'parameter': param.replace('_', ' ').title(), 'value': value, 
+                    'mean_risk': np.mean(param_risks), 'mean_anomaly': np.mean(param_anomalies)
+                })
         return pd.DataFrame(results)
 
 class StrategicAdvisor:
-    """Handles resource reallocation."""
+    """Provides strategic recommendations for resource allocation."""
     def __init__(self, data_manager: DataManager, model_params: Dict):
         self.dm = data_manager
         self.params = model_params
 
     def calculate_projected_response_time(self, zone: str, ambulances: List[Dict]) -> float:
-        """Calculates minimum response time to a zone."""
+        """Calculates the minimum projected response time from available ambulances to a zone."""
         if not zone or zone not in self.dm.zones_gdf.index or not ambulances:
             return DEFAULT_RESPONSE_TIME
+            
         zone_node = self.dm.zones_gdf.loc[zone, 'nearest_node']
-        if pd.isna(zone_node):
-            return DEFAULT_RESPONSE_TIME
+        if pd.isna(zone_node): return DEFAULT_RESPONSE_TIME
+        
         min_time = float('inf')
         for amb in ambulances:
-            if amb.get('status') == 'Disponible' and amb.get('nearest_node') and isinstance(amb['nearest_node'], str):
+            if amb.get('status') == 'Disponible' and amb.get('nearest_node'):
                 try:
-                    time = nx.shortest_path_length(self.dm.road_graph, amb['nearest_node'], zone_node, weight='weight') + self.params['response_time_turnout_penalty']
+                    time = nx.shortest_path_length(self.dm.road_graph, amb['nearest_node'], zone_node, weight='weight')
                     min_time = min(min_time, time)
-                except nx.NetworkXNoPath:
+                except (nx.NetworkXNoPath, nx.NodeNotFound):
                     continue
-        return min_time if min_time != float('inf') else DEFAULT_RESPONSE_TIME
+        return (min_time + self.params['response_time_turnout_penalty']) if min_time != float('inf') else DEFAULT_RESPONSE_TIME
 
     def recommend_resource_reallocations(self, risk_scores: Dict) -> List[Dict]:
-        """Recommends ambulance reallocations based on risk and response times."""
-        available = [{'id': amb_id, **d} for amb_id, d in self.dm.ambulances.items() if d.get('status') == 'Disponible']
-        if not available:
-            return []
-        perf = {z: {'risk': risk_scores.get(d['node'], 0), 'rt': self.calculate_projected_response_time(z, available)} for z, d in self.dm.zones_gdf.iterrows() if 'node' in d}
+        """Recommends ambulance reallocations based on risk-response time deficits."""
+        available_ambs = [{'id': amb_id, **d} for amb_id, d in self.dm.ambulances.items() if d.get('status') == 'Disponible']
+        if not available_ambs: return []
+
+        # Calculate current performance (deficit = risk * response_time)
+        perf = {
+            z: {'risk': risk_scores.get(d['nearest_node'], 0), 'rt': self.calculate_projected_response_time(z, available_ambs)}
+            for z, d in self.dm.zones_gdf.iterrows() if pd.notna(d.get('nearest_node'))
+        }
         deficits = {z: p['risk'] * p['rt'] for z, p in perf.items()}
         if not deficits or max(deficits.values(), default=0) < self.params['recommendation_deficit_threshold']:
             return []
+
+        # Find zone with highest deficit and its associated graph node
         target_zone = max(deficits, key=deficits.get)
         original_rt = perf[target_zone]['rt']
         target_node = self.dm.zones_gdf.loc[target_zone, 'nearest_node']
-        if pd.isna(target_node):
-            return []
-        best = None
+        if pd.isna(target_node): return []
+
+        # Find the ambulance move that provides the greatest utility (reduction in deficit)
+        best_move = None
         max_utility = -float('inf')
-        for amb in available:
-            if not amb.get('nearest_node'):
+        for amb in available_ambs:
+            if not amb.get('nearest_node') or amb['nearest_node'] == target_node:
                 continue
-            moved_ambulances = [{**a, 'nearest_node': target_node} if a['id'] == amb['id'] else a for a in available]
+            
+            # Simulate the move
+            moved_ambulances = [{**a, 'nearest_node': target_node} if a['id'] == amb['id'] else a for a in available_ambs]
             new_rt = self.calculate_projected_response_time(target_zone, moved_ambulances)
-            utility = (original_rt - new_rt) * perf[target_zone]['risk']
+            
+            utility = (original_rt - new_rt) * perf[target_zone]['risk'] # Utility = RT improvement * risk
             if utility > max_utility:
                 max_utility = utility
-                best = (amb['id'], self.dm.node_to_zone_map.get(amb['nearest_node'], 'Unknown'), new_rt)
-        if best and max_utility > self.params['recommendation_improvement_threshold']:
-            amb_id, from_zone, new_rt = best
-            return [{"unit": amb_id, "from": from_zone, "to": target_zone, "reason": f"Reduce projected response time in '{target_zone}' from ~{original_rt:.0f} min to ~{new_rt:.0f} min."}]
+                best_move = (amb['id'], self.dm.node_to_zone_map.get(amb['nearest_node'], 'Unknown'), new_rt)
+
+        if best_move and max_utility > self.params['recommendation_improvement_threshold']:
+            amb_id, from_zone, new_rt = best_move
+            return [{"unit": amb_id, "from": from_zone, "to": target_zone, "reason": f"Reduce projected response time in high-risk zone '{target_zone}' from ~{original_rt:.0f} to ~{new_rt:.0f} min."}]
+        
         return []
 
+# --- L3: VISUALIZATION & UI ---
+
 class VisualizationSuite:
-    """Handles visualizations."""
+    """Handles the creation of all plots and maps for the UI."""
     def __init__(self, style_config: Dict):
         self.config = style_config
 
-    def plot_risk_comparison(self, prior_df, posterior_df):
+    def plot_risk_profile_comparison(self, prior_df, posterior_df):
+        """Plots a comparison of prior (historical) vs. posterior (current) risk."""
         if prior_df.empty or posterior_df.empty:
             return alt.Chart().mark_text(text="No data for risk comparison").encode()
-        prior_df = prior_df.copy()
-        posterior_df = posterior_df.copy()
+        
         prior_df['type'] = 'Prior (Historical)'
         posterior_df['type'] = 'Posterior (Current)'
         combined = pd.concat([prior_df, posterior_df], ignore_index=True)
+        
         return alt.Chart(combined).mark_bar(opacity=0.8).encode(
             x=alt.X('risk:Q', title='Risk Level'),
             y=alt.Y('zone:N', title='Zone', sort='-x'),
             color=alt.Color('type:N', title='Risk Type', scale=alt.Scale(range=[self.config['colors']['primary'], self.config['colors']['secondary']])),
-            tooltip=['zone', alt.Tooltip('risk', format='.3f')]
-        ).properties(title="Bayesian Risk Analysis").interactive()
+            tooltip=['zone', 'type', alt.Tooltip('risk', format='.3f')]
+        ).properties(title="Risk Profile Comparison").interactive()
+
+    def plot_sensitivity_analysis(self, sensitivity_df: pd.DataFrame) -> alt.Chart:
+        """Generates a grouped bar chart for sensitivity analysis results."""
+        if sensitivity_df.empty:
+            return alt.Chart().mark_text(text="No sensitivity data to display.").encode()
+
+        base = alt.Chart(sensitivity_df).encode(
+            x=alt.X('value:Q', title="Parameter Value"),
+            y=alt.Y('mean_risk:Q', title="Mean Output Value"),
+            color=alt.Color('parameter:N', title="Parameter")
+        )
+        chart = base.mark_line(point=True) + base.mark_point()
+        return chart.properties(
+            title="Sensitivity Analysis: Parameter vs. Mean Risk"
+        ).facet(
+            row=alt.Row('parameter:N', title="Parameter"),
+            resolve=alt.Resolve(scale={'x': 'independent'})
+        ).interactive()
 
 def prepare_visualization_data(data_manager: DataManager, risk_scores: Dict, all_incidents: List, style: Dict) -> Tuple:
-    """Prepares and sanitizes data for pydeck visualization."""
-    hosp_data = [{'name': f"H: {n}", 'tooltip_text': f"Cap: {d['capacity']} Load: {d['load']}", 'lon': d['location'].x, 'lat': d['location'].y, 'icon_data': {"url": style['icons']['hospital'], "width": 128, "height": 128, "anchorY": 128}} for n, d in data_manager.hospitals.items() if d.get('location') and not d['location'].is_empty]
-    hosp_df = pd.DataFrame(hosp_data)
-    
-    amb_data = [{'name': f"U: {d['id']}", 'tooltip_text': f"Status: {d['status']}<br>Base: {d['home_base']}", 'lon': d['location'].x, 'lat': d['location'].y, 'icon_data': {"url": style['icons']['ambulance'], "width": 128, "height": 128, "anchorY": 128}, 'size': style['sizes']['ambulance']} for d in data_manager.ambulances.values() if d.get('location') and not d['location'].is_empty]
-    amb_df = pd.DataFrame(amb_data)
-    
-    inc_data = [{'name': f"I: {i.get('id', 'N/A')}", 'tooltip_text': f"Type: {i.get('type', 'N/A')}<br>Triage: {i.get('triage', 'N/A')}", 'lon': i['location'].x, 'lat': i['location'].y, 'color': style['colors']['hawkes_echo'] if i.get('is_echo', False) else style['colors']['accent_crit'], 'radius': style['sizes']['hawkes_echo'] if i.get('is_echo', False) else style['sizes']['incident_base']} for i in all_incidents if i.get('location') and isinstance(i.get('location'), Point) and not i['location'].is_empty]
-    inc_df = pd.DataFrame(inc_data)
-    
-    heat_df = pd.DataFrame([{"lon": i['location'].x, "lat": i['location'].y} for i in all_incidents if i.get('location') and isinstance(i.get('location'), Point) and not i['location'].is_empty and not i.get('is_echo', False)])
-    
+    """Prepares and sanitizes data from various sources into DataFrames for pydeck visualization."""
     zones_gdf = data_manager.zones_gdf.copy()
-    zones_gdf['risk'] = zones_gdf['node'].map(risk_scores).fillna(0.0).astype(float)
+    zones_gdf['risk'] = zones_gdf['nearest_node'].map(risk_scores).fillna(0.0).astype(float)
     max_risk = max(0.01, zones_gdf['risk'].max())
-    zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [220, 53, 69, int(200 * (r / max_risk))]).tolist()
+    zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [220, 53, 69, int(220 * (r / max_risk))]).tolist()
+    zone_df = pd.DataFrame([
+        {'name': idx, 'polygon': list(row.geometry.exterior.coords), 'risk': float(row['risk']), 'fill_color': row['fill_color'], 'tooltip_text': f"Risk: {row['risk']:.3f}"}
+        for idx, row in zones_gdf.iterrows() if row.geometry and not row.geometry.is_empty
+    ])
     
-    zone_data = []
-    for idx, row in zones_gdf.iterrows():
-        if row.geometry and not row.geometry.is_empty:
-            coords = list(row.geometry.exterior.coords)
-            zone_data.append({
-                'name': idx,
-                'polygon': coords,
-                'risk': float(row['risk']),
-                'fill_color': row['fill_color']
-            })
-    zone_df = pd.DataFrame(zone_data)
+    hosp_df = pd.DataFrame([
+        {'name': f"H: {n}", 'lon': d['location'].x, 'lat': d['location'].y, 'icon_data': {"url": style['icons']['hospital'], "width": 128, "height": 128, "anchorY": 128}, 'tooltip_text': f"Capacity: {d['capacity']} Load: {d['load']}"}
+        for n, d in data_manager.hospitals.items() if d.get('location')
+    ])
     
-    return zone_df, hosp_df, amb_df, inc_df, heat_df
+    amb_df = pd.DataFrame([
+        {'name': f"U: {d['id']}", 'lon': d['location'].x, 'lat': d['location'].y, 'icon_data': {"url": style['icons']['ambulance'], "width": 128, "height": 128, "anchorY": 128}, 'tooltip_text': f"Status: {d['status']}<br>Base: {d['home_base']}"}
+        for d in data_manager.ambulances.values() if d.get('location')
+    ])
+    
+    inc_df = pd.DataFrame([
+        {'lon': i['location'].x, 'lat': i['location'].y, 'color': style['colors']['hawkes_echo'] if i.get('is_echo') else style['colors']['accent_crit'], 'radius': style['sizes']['hawkes_echo'] if i.get('is_echo') else style['sizes']['incident_base'], 'name': f"I: {i.get('id', 'N/A')}", 'tooltip_text': f"Type: {i.get('type')}<br>Triage: {i.get('triage')}"}
+        for i in all_incidents if i.get('location')
+    ])
+    
+    heatmap_df = pd.DataFrame([
+        {"lon": i['location'].x, "lat": i['location'].y}
+        for i in all_incidents if i.get('location') and not i.get('is_echo')
+    ])
+    
+    return zone_df, hosp_df, amb_df, inc_df, heatmap_df
 
-def create_deck_gl_map(zone_df: pd.DataFrame, hospital_df: pd.DataFrame, ambulance_df: pd.DataFrame, incident_df: pd.DataFrame, heatmap_df: pd.DataFrame, app_config: Dict) -> pdk.Deck:
-    """Creates a Deck.gl map from sanitized DataFrames."""
+def create_deck_gl_map(zone_df, hosp_df, amb_df, inc_df, heat_df, app_config) -> pdk.Deck:
+    """Creates the main Deck.gl map with multiple layers."""
     style = app_config['styling']
-    layers = []
     
-    if not zone_df.empty:
-        layers.append(pdk.Layer("PolygonLayer", data=zone_df, get_polygon="polygon", filled=True, stroked=True, lineWidthMinPixels=1, get_line_color=[255, 255, 255, 50], extruded=True, get_elevation=f"risk * {style['map_elevation_multiplier']}", get_fill_color="fill_color", opacity=0.1, pickable=True))
-    if not hospital_df.empty:
-        layers.append(pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style['sizes']['hospital'], size_scale=15, pickable=True))
-    if not ambulance_df.empty:
-        layers.append(pdk.Layer("IconLayer", data=ambulance_df, get_icon="icon_data", get_position='[lon, lat]', get_size='size', size_scale=15, pickable=True))
-    if not heatmap_df.empty:
-        layers.insert(0, pdk.Layer("HeatmapLayer", data=heatmap_df, get_position='[lon, lat]', opacity=0.3, aggregation='MEAN', threshold=0.1))
-    if not incident_df.empty:
-        layers.append(pdk.Layer("ScatterplotLayer", data=incident_df, get_position='[lon, lat]', get_radius='radius', get_fill_color='color', radius_scale=1, pickable=True))
-        
-    tooltip = {"html": "<b>{name}</b><br/>{tooltip_text}"}
+    layers = [
+        pdk.Layer("HeatmapLayer", data=heat_df, get_position='[lon, lat]', opacity=0.3, aggregation='MEAN', threshold=0.1),
+        pdk.Layer("PolygonLayer", data=zone_df, get_polygon="polygon", filled=True, stroked=True, lineWidthMinPixels=1, get_line_color=[255, 255, 255, 50], extruded=True, get_elevation=f"risk * {style['map_elevation_multiplier']}", get_fill_color="fill_color", opacity=0.1, pickable=True),
+        pdk.Layer("IconLayer", data=hosp_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style['sizes']['hospital'], size_scale=15, pickable=True),
+        pdk.Layer("IconLayer", data=amb_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style['sizes']['ambulance'], size_scale=15, pickable=True),
+        pdk.Layer("ScatterplotLayer", data=inc_df, get_position='[lon, lat]', get_radius='radius', get_fill_color='color', radius_scale=1, pickable=True),
+    ]
+    
     return pdk.Deck(
-        layers=layers,
+        layers=[layer for layer in layers if not layer.data.empty],
         initial_view_state=pdk.ViewState(latitude=32.5, longitude=-117.02, zoom=11, bearing=0, pitch=50),
-        map_provider="mapbox" if app_config['mapbox_api_key'] else "carto",
+        map_provider="mapbox" if app_config.get('mapbox_api_key') else "carto",
         map_style=app_config['map_style'],
-        api_keys={'mapbox': app_config['mapbox_api_key']},
-        tooltip=tooltip
+        api_keys={'mapbox': app_config.get('mapbox_api_key')},
+        tooltip={"html": "<b>{name}</b><br/>{tooltip_text}"}
     )
+
+# --- L4: APPLICATION ENTRYPOINT & MAIN LOGIC ---
 
 @st.cache_resource
 def initialize_app_components():
-    """Initializes and caches main application components."""
+    """Initializes and caches all core application components."""
     warnings.filterwarnings('ignore', category=UserWarning)
     warnings.filterwarnings('ignore', category=FutureWarning)
+    
     app_config = get_app_config()
     distributions = {k: _normalize_dist(v) for k, v in app_config['data']['distributions'].items()}
+    
     data_manager = DataManager(app_config)
     engine = SimulationEngine(data_manager, app_config['simulation_params'], distributions)
     predictor = PredictiveAnalyticsEngine(data_manager, app_config['model_params'], distributions)
     advisor = StrategicAdvisor(data_manager, app_config['model_params'])
     sensitivity_analyzer = SensitivityAnalyzer(engine, predictor)
     plotter = VisualizationSuite(app_config['styling'])
+    
     return data_manager, engine, predictor, advisor, sensitivity_analyzer, plotter, app_config
 
-def render_intel_briefing(anomaly: float, entropy: float, mutual_info: float, recommendations: List[Dict]):
-    """Renders the intelligence briefing section."""
-    st.subheader("Intel Briefing and Recommendations")
-    status = "ANOMALOUS" if anomaly > 0.2 else "ELEVATED" if anomaly > 0.1 else "NOMINAL"
-    c1, c2, c3 = st.columns(3)
-    c1.metric("System Status", status)
-    c2.metric("Anomaly Score (KL)", f"{anomaly:.4f}")
-    c3.metric("Mutual Information", f"{mutual_info:.4f}")
-    c1.metric("Spatial Entropy", f"{entropy:.4f} bits")
-    if recommendations:
-        st.warning("Resource Deployment Recommendation:")
-        for r in recommendations:
-            st.write(f"**Move {r['unit']}** from `{r['from']}` to `{r['to']}`. **Reason:** {r['reason']}")
-    else:
-        st.success("No resource reallocations required.")
-
-def main():
-    """Main application entry point."""
-    st.set_page_config(page_title="RedShield AI v10.15", layout="wide")
-    st.title("RedShield AI Command Suite")
-    st.markdown("**Digital Twin for Emergency Medical Services Management** | Version 10.15")
-    
+def initialize_session_state(config):
+    """Initializes session state variables if they don't exist."""
     if 'current_hour' not in st.session_state:
         st.session_state.current_hour = 0.0
-    st.session_state.current_hour = (st.session_state.current_hour + 0.1) % 24
+    if 'prior_risks' not in st.session_state:
+        st.session_state.prior_risks = {
+            name: data.get('prior_risk', 0.5)
+            for name, data in config['data']['zones'].items()
+        }
+
+def update_prior_risks(live_state: Dict, learning_rate: float = 0.05):
+    """Updates the prior risk distribution based on new incident data (Bayesian-like update)."""
+    df = pd.DataFrame(live_state.get("active_incidents", []))
+    if df.empty or 'zone' not in df.columns:
+        return
+        
+    incident_counts = df.groupby('zone').size()
+    total_incidents = len(df)
+    
+    if total_incidents == 0:
+        return
+        
+    # Calculate observed risk (proportion of incidents)
+    observed_risk = incident_counts / total_incidents
+    
+    for zone, risk in observed_risk.items():
+        if zone in st.session_state.prior_risks:
+            current_prior = st.session_state.prior_risks[zone]
+            # Update prior with a weighted average of the old prior and new observation
+            new_prior = (1 - learning_rate) * current_prior + learning_rate * risk
+            st.session_state.prior_risks[zone] = new_prior
+
+
+def render_intel_briefing(anomaly: float, entropy: float, mutual_info: float, recommendations: List[Dict]):
+    """Renders the main intelligence briefing and recommendations panel."""
+    st.subheader("Intel Briefing & Recommendations")
+    status = "ANOMALOUS" if anomaly > 0.2 else "ELEVATED" if anomaly > 0.1 else "NOMINAL"
+    
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("System Status", status)
+    c2.metric("Anomaly Score (KL Div.)", f"{anomaly:.4f}")
+    c3.metric("Spatial Entropy", f"{entropy:.4f} bits")
+    c4.metric("Mutual Information", f"{mutual_info:.4f}")
+    
+    if recommendations:
+        st.warning("Actionable Recommendation:")
+        for r in recommendations:
+            st.write(f"**Move Unit {r['unit']}** from `{r['from']}` to `{r['to']}`. **Reason:** {r['reason']}")
+    else:
+        st.success("No resource reallocations required. Current deployment is optimal.")
+
+def main():
+    """Main application entry point and render loop."""
+    st.set_page_config(page_title="RedShield AI", layout="wide", initial_sidebar_state="expanded")
     
     try:
-        dm, engine, predictor, advisor, sensitivity_analyzer, plotter, config = initialize_app_components()
+        dm, engine, predictor, advisor, analyzer, plotter, config = initialize_app_components()
+        initialize_session_state(config)
         
-        st.header("Command Sandbox: Interactive Simulator")
-        c1, c2, c3 = st.columns(3)
-        is_holiday = c1.checkbox("Holiday")
-        is_payday = c2.checkbox("Payday")
-        weather = c3.selectbox("Weather", ["Clear", "Rain", "Fog"])
-        c1, c2 = st.columns(2)
-        base_rate = c1.slider("Base Rate (μ)", 1, 20, 5)
-        excitation = c2.slider("Excitation (κ)", 0.0, 1.0, 0.5)
+        # --- SIDEBAR ---
+        st.sidebar.title("RedShield AI v10.20")
+        st.sidebar.markdown("**EMS Digital Twin**")
+        
+        st.sidebar.header("Simulation Control")
+        if st.sidebar.button("Advance Time (Simulate)"):
+             st.session_state.current_hour = (st.session_state.current_hour + 0.5) % 24
+        st.sidebar.metric("Current Simulation Time", f"{st.session_state.current_hour:.1f}h")
+        
+        st.sidebar.subheader("Environmental Factors")
+        is_holiday = st.sidebar.checkbox("Holiday Active")
+        is_payday = st.sidebar.checkbox("Is Payday")
+        weather = st.sidebar.selectbox("Weather Conditions", ["Clear", "Rain", "Fog"], index=0)
+        base_rate = st.sidebar.slider("Incident Base Rate (μ)", 1, 20, 5, help="Baseline number of incidents per hour.")
+        excitation = st.sidebar.slider("Self-Excitation (κ)", 0.0, 1.0, 0.5, help="Probability of a severe incident triggering an echo.")
         
         factors = EnvFactors(is_holiday, is_payday, weather, False, 1.0, base_rate, excitation)
         
+        # --- CORE LOGIC ---
         live_state = engine.get_live_state(factors, st.session_state.current_hour)
-        _, risk = predictor.calculate_holistic_risk(live_state)
-        anomaly, entropy, _, _, mutual_info = predictor.calculate_information_metrics(live_state)
-        recs = advisor.recommend_resource_reallocations(risk)
+        update_prior_risks(live_state)
+        
+        posterior_risk = predictor.calculate_holistic_risk(live_state, st.session_state.prior_risks)
+        anomaly, entropy, hist_dist, curr_dist, mutual_info = predictor.calculate_information_metrics(live_state)
+        recs = advisor.recommend_resource_reallocations(posterior_risk)
+        
+        # --- MAIN PANEL ---
+        st.title("RedShield AI Command Suite")
         
         render_intel_briefing(anomaly, entropy, mutual_info, recs)
-        
         st.divider()
-        st.subheader("Operations Map")
-        vis_data = prepare_visualization_data(dm, risk, live_state["active_incidents"], config['styling'])
         
+        st.subheader("Live Operations Map")
+        vis_data = prepare_visualization_data(dm, posterior_risk, live_state["active_incidents"], config['styling'])
         deck = create_deck_gl_map(*vis_data, config)
         st.pydeck_chart(deck, use_container_width=True)
-        
+
+        # --- ADVANCED ANALYTICS EXPANDER ---
+        with st.expander("Advanced Analytics & Forecasting"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("Risk Analysis")
+                prior_df = pd.DataFrame(st.session_state.prior_risks.items(), columns=['zone', 'risk'])
+                posterior_zone_risk = {dm.node_to_zone_map.get(node): risk for node, risk in posterior_risk.items() if dm.node_to_zone_map.get(node)}
+                posterior_df = pd.DataFrame(posterior_zone_risk.items(), columns=['zone', 'risk'])
+                st.altair_chart(plotter.plot_risk_profile_comparison(prior_df, posterior_df), use_container_width=True)
+
+            with col2:
+                st.subheader("Sensitivity Analysis")
+                st.info("Analyze how key factors influence system risk.", icon="🔬")
+                if st.button("Run Sensitivity Analysis"):
+                    with st.spinner("Running analysis... this may take a moment."):
+                        params_to_test = {
+                            'base_rate': list(range(1, 11, 2)),
+                            'self_excitation_factor': np.linspace(0, 1, 5).tolist()
+                        }
+                        sensitivity_results = analyzer.analyze_sensitivity(factors, params_to_test)
+                        st.altair_chart(plotter.plot_sensitivity_analysis(sensitivity_results), use_container_width=True)
+
     except Exception as e:
-        logger.error(f"Application failed: {e}", exc_info=True)
-        st.error(f"A critical error occurred: {e}. Check logs for details.")
+        logger.error(f"Application failed with a critical error: {e}", exc_info=True)
+        st.error(f"A critical error occurred: {e}. Please check the `redshield_ai.log` file for details.")
 
 if __name__ == "__main__":
     main()
