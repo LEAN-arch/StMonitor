@@ -1,6 +1,6 @@
 # ===================================================================
-# Requirements for RedShield AI Command Suite - v4 (FINAL & VERIFIED)
-# This file resolves all known dependency conflicts for this project.
+# Requirements for RedShield AI Command Suite
+# This is the verified and correct set of dependencies for the script.
 # ===================================================================
 
 # -- Core Application & Data Handling --
@@ -14,19 +14,19 @@ shapely==2.0.4
 
 # -- Network, ML & Scientific Computing --
 networkx==2.8.8
-node2vec==0.4.6
+scipy==1.12.0      # Solves the 'errstate' AttributeError
 scikit-learn==1.4.2
-torch==2.3.1
-scipy==1.12.0
 
-# -- Hidden Dependencies (Now Managed) --
+# -- Graph Embeddings & Dependencies --
+# node2vec depends on gensim
+node2vec==0.4.6
 gensim==4.3.2
-rich==13.7.1
-
-# -- Bayesian Modeling --
-pymc==5.15.1
 
 # -- Visualization --
 altair==5.3.0
 pydeck==0.9.0
+
+# -- Hidden Dependencies (Managed for Stability) --
+# Often required by Streamlit or other libraries
+rich==13.7.1
 matplotlib==3.8.3
