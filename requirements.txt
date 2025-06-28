@@ -1,9 +1,10 @@
 # ===================================================================
-# Requirements for RedShield AI Command Suite
-# Pinned versions for a stable, reproducible environment.
-# Based on user-provided list and code analysis.
+# Requirements for RedShield AI Command Suite - v3 (FIXED)
 #
-# Install using: pip install -r requirements.txt
+# Fixes the following issues:
+# 1. Downgraded 'scipy' to 1.12.0 to resolve the 'triu' ImportError.
+# 2. Pinned 'rich' to 13.7.1 to resolve the conflict with streamlit==1.33.0.
+# 3. Explicitly added 'gensim' to manage its version.
 # ===================================================================
 
 # -- Core Application & Data Handling --
@@ -12,19 +13,19 @@ pandas==2.2.2
 numpy==1.26.4
 
 # -- Geospatial Libraries --
-# Note: Geopandas has complex dependencies. These versions are compatible.
 geopandas==0.14.4
 shapely==2.0.4
 
-# -- Network & Graph Analysis --
+# -- Network, ML & Scientific Computing --
 networkx==3.3
 node2vec==0.4.6
-
-# -- Machine Learning & Scientific Computing --
-# scikit-learn provides the 'sklearn' module used in the code
 scikit-learn==1.4.2
-scipy==1.13.1
 torch==2.3.1
+scipy==1.12.0  # <-- CRITICAL FIX: Downgraded from 1.13.1
+
+# -- Hidden Dependencies (Now Managed) --
+gensim==4.3.2  # <-- CRITICAL FIX: Pinned for compatibility with scipy
+rich==13.7.1   # <-- CRITICAL FIX: Pinned for compatibility with streamlit
 
 # -- Bayesian Modeling --
 pymc==5.15.1
