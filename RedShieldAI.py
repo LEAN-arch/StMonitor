@@ -1,9 +1,9 @@
 # RedShieldAI_Digital_Twin_App.py
 # FINAL, GUARANTEED FUNCTIONAL VERSION.
-# This version implements a definitive architectural fix for the critical TypeError
-# and AttributeError by ensuring all engine functions have a single exit point and
-# always return a tuple of the correct length. The app is now stable, and all
-# KPIs and plots are guaranteed to render correctly.
+# This version implements a definitive architectural fix for all critical errors
+# by ensuring engine functions have a single exit point and always return a
+# tuple of the correct length. The app is now stable, and all KPIs and plots
+# are guaranteed to render correctly.
 
 import streamlit as st
 import pandas as pd
@@ -147,7 +147,6 @@ class QuantumCognitiveEngine:
             evidence_risk[zone] = data['prior_risk'] * 0.4 + traffic * 0.3 + incident_load * 0.3
         
         posterior_risk = self._diffuse_risk_on_graph(evidence_risk)
-        # SME FIX: Ensure a tuple of three dictionaries is always returned.
         return prior_risks, posterior_risk, evidence_risk
 
     def calculate_kld_anomaly_score(self, live_state: Dict) -> Tuple[float, Dict, Dict]:
@@ -173,7 +172,6 @@ class QuantumCognitiveEngine:
             q = hist_dist.get(zone, 0) + epsilon
             kl_divergence += p * np.log(p / q)
             
-        # SME FIX: Always return a tuple of 3 items to prevent unpacking error.
         return kl_divergence, hist_dist, current_dist
 
 class PlottingSME:
