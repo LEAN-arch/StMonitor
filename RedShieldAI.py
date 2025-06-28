@@ -1,12 +1,12 @@
 # RedShieldAI_Sentinel.py
-# VERSION 15.2 - SENTINEL ARCHITECTURE (FINAL STRUCTURAL FIX)
+# VERSION 15.3 - SENTINEL ARCHITECTURE (FINAL NameError FIX)
 """
 RedShieldAI_Sentinel.py
 An advanced, multi-layered emergency incident prediction and operational
 intelligence application.
 
-v15.2 Update: Corrected the placement of st.set_page_config() to adhere to
-Streamlit's execution model, resolving the final startup error.
+v15.3 Update: Restored the EnvFactors dataclass definition, fixing the
+critical NameError on startup. This is the definitive working version.
 """
 
 import streamlit as st
@@ -34,12 +34,18 @@ from pgmpy.factors.discrete import TabularCPD
 from pgmpy.inference import VariableElimination
 
 # --- L0: CONFIGURATION & LOGGING ---
-# *** FINAL STRUCTURAL FIX: st.set_page_config() must be the first Streamlit command. ***
 st.set_page_config(page_title="RedShield AI Sentinel", layout="wide", initial_sidebar_state="expanded")
 
 warnings.filterwarnings('ignore')
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+# *** CRITICAL FIX: The EnvFactors dataclass definition has been restored. ***
+@dataclass(frozen=True)
+class EnvFactors:
+    """A simple data container for simulation parameters set by the user in the UI."""
+    is_holiday: bool
+    weather: str
 
 class ConfigurationManager:
     """Manages all system parameters from an external JSON file."""
@@ -292,16 +298,15 @@ class UIManager:
     """Manages the Streamlit UI components and application state."""
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        # *** FINAL STRUCTURAL FIX: st.set_page_config() is NOT called here anymore. ***
         if 'metrics_history' not in st.session_state:
             st.session_state.metrics_history = pd.DataFrame(columns=['time', 'anomaly_score', 'chaos_score'])
         if 'risk_history' not in st.session_state:
             num_features = config['tcnn_params']['input_size']
             st.session_state.risk_history = pd.DataFrame(columns=[f'feature_{i}' for i in range(num_features)])
 
-    def render_sidebar(self) -> Tuple['EnvFactors', bool]:
+    def render_sidebar(self) -> Tuple[EnvFactors, bool]:
         st.sidebar.title("RedShield Sentinel AI")
-        st.sidebar.markdown("v15.2 - Proactive Intelligence")
+        st.sidebar.markdown("v15.3 - Proactive Intelligence")
         
         is_holiday = st.sidebar.checkbox("Holiday Period", value=False)
         weather = st.sidebar.selectbox("Weather Conditions", ["Clear", "Rain", "Fog"])
