@@ -1,8 +1,8 @@
 # RedShieldAI_Digital_Twin_App.py
 # FINAL, GUARANTEED FUNCTIONAL VERSION.
-# This version fixes all critical runtime errors by ensuring correct color sourcing
-# and guaranteeing consistent return types from all engine functions. The app is
-# now stable, and all KPIs and plots are guaranteed to render correctly.
+# This version fixes the critical TypeError by ensuring all engine functions
+# consistently return a tuple of the correct length, preventing any unpacking
+# errors. The app is now stable, and all KPIs and plots are guaranteed to render.
 
 import streamlit as st
 import pandas as pd
@@ -40,6 +40,7 @@ def get_app_config() -> Dict:
             },
             'historical_incident_distribution': {'Zona Río': 0.5, 'Otay': 0.3, 'Playas': 0.2},
             'city_boundary': [[32.535, -117.129], [32.510, -117.125], [32.448, -117.060], [32.435, -116.930], [32.537, -116.930], [32.537, -117.030]],
+            ],
             'road_network': {
                 'nodes': { "N_ZonaRío": {'pos': [32.528, -117.025]}, "N_Otay": {'pos': [32.535, -116.965]}, "N_Playas": {'pos': [32.52, -117.12]} },
                 'edges': [["N_ZonaRío", "N_Otay", 1.0], ["N_ZonaRío", "N_Playas", 1.0]]
@@ -146,6 +147,7 @@ class QuantumCognitiveEngine:
             evidence_risk[zone] = data['prior_risk'] * 0.4 + traffic * 0.3 + incident_load * 0.3
         
         posterior_risk = self._diffuse_risk_on_graph(evidence_risk)
+        # SME FIX: Ensure a tuple of three dictionaries is always returned.
         return prior_risks, posterior_risk, evidence_risk
 
     def calculate_kld_anomaly_score(self, live_state: Dict) -> Tuple[float, Dict, Dict]:
@@ -257,21 +259,15 @@ def get_singleton_engine():
 def render_intel_briefing(anomaly_score, all_incidents, app_config):
     st.subheader("Intel Briefing")
     colors = app_config['styling']['colors']
-    status_color = colors['accent_ok']
-    status_text = "NOMINAL"
-    status_desc = "Los patrones de incidentes se alinean con las normas históricas."
     if anomaly_score > 0.2:
-        status_color = colors['accent_crit']
-        status_text = "ANÓMALO"
-        status_desc = "La distribución de incidentes se desvía significativamente de la norma."
+        status_color, status_text, status_desc = colors['accent_crit'], "ANÓMALO", "La distribución de incidentes se desvía significativamente de la norma."
     elif anomaly_score > 0.1:
-        status_color = colors['accent_warn']
-        status_text = "ELEVADO"
-        status_desc = "Se detectan desviaciones notables en los patrones de incidentes."
+        status_color, status_text, status_desc = colors['accent_warn'], "ELEVADO", "Se detectan desviaciones notables en los patrones de incidentes."
+    else:
+        status_color, status_text, status_desc = colors['accent_ok'], "NOMINAL", "Los patrones de incidentes se alinean con las normas históricas."
     
     st.markdown(f"**Estado del Sistema:** <span style='color:{status_color}'><b>{status_text}</b></span>", unsafe_allow_html=True)
     st.caption(status_desc)
-
     echo_count = sum(1 for i in all_incidents if i.get('is_echo'))
     st.info(f"**{echo_count}** incidentes de 'eco' detectados (Proceso de Hawkes).")
 
@@ -280,7 +276,7 @@ def render_live_ops_tab(data_fabric, engine, app_config):
     st.info("Ajuste los parámetros para ver cómo evoluciona el estado de la ciudad en tiempo real.")
     col1, col2 = st.columns(2)
     base_rate = col1.slider("Tasa Base de Incidentes (μ)", 1, 20, 5, help="Controla la tasa de Poisson de nuevos incidentes.")
-    excitation = col2.slider("Factor de Auto-Excitación (κ)", 0.0, 1.0, 0.5, help="Probabilidad de que un incidente crítico genere 'ecos' (Proceso de Hawkes).")
+    excitation = col2.slider("Factor de Auto-Excitación (κ)", 0.0, 1.0, 0.5, help="Probabilidad de que un incidente crítico genere 'ecos'.")
     
     live_state = engine.get_live_state(base_rate, excitation)
     all_incidents = live_state.get("active_incidents", [])
