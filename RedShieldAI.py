@@ -1,15 +1,14 @@
 # RedShieldAI_Command_Suite.py
-# VERSION 13.0 - STABLE PLOTLY MAP & FULL DOCUMENTATION
+# VERSION 13.1 - CRITICAL BUG FIX (NameError)
 """
 RedShieldAI_Command_Suite.py
 Digital Twin for Emergency Medical Services Management
 
 This is the final, stable version of the application.
 Key Changes:
+- RESTORED the _normalize_dist function to fix the NameError crash.
 - Replaced the unstable PyDeck map with a robust Plotly map.
 - Removed all problematic dependencies (node2vec, pydeck).
-- Corrected all known bugs.
-- Added extensive comments explaining the purpose of each component.
 """
 
 import streamlit as st
@@ -23,7 +22,7 @@ import networkx as nx
 import os
 from pathlib import Path
 import altair as alt
-import plotly.graph_objects as go  # Import Plotly
+import plotly.graph_objects as go
 import logging
 import warnings
 import json
@@ -61,6 +60,15 @@ def get_app_config() -> Dict[str, Any]:
         config['mapbox_api_key'] = None
     config['mapbox_api_key'] = mapbox_key
     return config
+
+# *** CRITICAL FIX: The _normalize_dist function has been restored. ***
+def _normalize_dist(dist: Dict[str, float]) -> Dict[str, float]:
+    """Normalizes a dictionary of probabilities to sum to 1."""
+    if not isinstance(dist, dict): return {}
+    total = sum(v for v in dist.values() if isinstance(v, (int, float)) and v >= 0)
+    if total <= 0:
+        return {k: 1.0 / len(dist) for k in dist} if dist else {}
+    return {k: v / total for k, v in dist.items()}
 
 # --- L2: CORE APPLICATION MODULES ---
 
@@ -279,73 +287,26 @@ def create_operations_map_plotly(dm: DataManager, risk_scores: Dict, incidents: 
        colors, and tooltips that appear when you hover over them.
     This approach is more robust and provides a rich, interactive user experience.
     """
-    # Prepare Zone Risk Layer data
     zones_gdf = dm.zones_gdf.copy(); zones_gdf['risk'] = zones_gdf['nearest_node'].map(risk_scores).fillna(0.0)
-    max_risk = max(0.01, zones_gdf['risk'].max())
-    zones_gdf['risk_text'] = zones_gdf['risk'].apply(lambda x: f"Risk: {x:.2f}")
-
-    # Prepare point data (incidents, hospitals, ambulances)
+    max_risk = max(0.01, zones_gdf['risk'].max()); zones_gdf['risk_text'] = zones_gdf['risk'].apply(lambda x: f"Risk: {x:.2f}")
     inc_df = pd.DataFrame(incidents) if incidents else pd.DataFrame()
     hosp_df = pd.DataFrame([{'lat': h['location'].y, 'lon': h['location'].x, 'name': name} for name, h in dm.hospitals.items()])
     amb_df = pd.DataFrame([{'lat': a['location'].y, 'lon': a['location'].x, 'name': a['id']} for a in dm.ambulances.values()])
-
-    # Create the figure object
     fig = go.Figure()
 
-    # Add Zone Risk Layer
-    fig.add_trace(go.Choroplethmapbox(
-        geojson=json.loads(zones_gdf.geometry.to_json()),
-        locations=zones_gdf.index,
-        z=zones_gdf['risk'],
-        zmin=0, zmax=max_risk,
-        colorscale="Reds",
-        marker_opacity=0.3, marker_line_width=1,
-        hovertext=zones_gdf['risk_text'],
-        name="Zone Risk"
-    ))
+    fig.add_trace(go.Choroplethmapbox(geojson=json.loads(zones_gdf.geometry.to_json()), locations=zones_gdf.index, z=zones_gdf['risk'], zmin=0, zmax=max_risk, colorscale="Reds", marker_opacity=0.3, marker_line_width=1, hovertext=zones_gdf['risk_text'], name="Zone Risk"))
+    if not inc_df.empty: fig.add_trace(go.Scattermapbox(lat=inc_df['location'].apply(lambda p: p.y), lon=inc_df['location'].apply(lambda p: p.x), mode='markers', marker=go.scattermapbox.Marker(size=14, color='orange', symbol='circle'), text=inc_df['id'], name='Incidents'))
+    if not hosp_df.empty: fig.add_trace(go.Scattermapbox(lat=hosp_df['lat'], lon=hosp_df['lon'], mode='markers', marker=go.scattermapbox.Marker(size=18, color='blue', symbol='hospital'), text=hosp_df['name'], name='Hospitals'))
+    if not amb_df.empty: fig.add_trace(go.Scattermapbox(lat=amb_df['lat'], lon=amb_df['lon'], mode='markers', marker=go.scattermapbox.Marker(size=12, color='lime', symbol='car'), text=amb_df['name'], name='Ambulances'))
 
-    # Add Incidents Layer
-    if not inc_df.empty:
-        fig.add_trace(go.Scattermapbox(
-            lat=inc_df['location'].apply(lambda p: p.y), lon=inc_df['location'].apply(lambda p: p.x),
-            mode='markers',
-            marker=go.scattermapbox.Marker(size=14, color='orange', symbol='circle'),
-            text=inc_df['id'], name='Incidents'
-        ))
-
-    # Add Hospitals Layer
-    if not hosp_df.empty:
-        fig.add_trace(go.Scattermapbox(
-            lat=hosp_df['lat'], lon=hosp_df['lon'],
-            mode='markers',
-            marker=go.scattermapbox.Marker(size=18, color='blue', symbol='hospital'),
-            text=hosp_df['name'], name='Hospitals'
-        ))
-    
-    # Add Ambulances Layer
-    if not amb_df.empty:
-        fig.add_trace(go.Scattermapbox(
-            lat=amb_df['lat'], lon=amb_df['lon'],
-            mode='markers',
-            marker=go.scattermapbox.Marker(size=12, color='lime', symbol='car'),
-            text=amb_df['name'], name='Ambulances'
-        ))
-
-    # Update map layout
-    fig.update_layout(
-        title="Live Operations Map",
-        mapbox_style="carto-darkmatter" if not config.get('mapbox_api_key') else "dark",
-        mapbox_accesstoken=config.get('mapbox_api_key'),
-        mapbox=dict(center=dict(lat=32.5, lon=-117.02), zoom=10.5),
-        margin={"r":0,"t":40,"l":0,"b":0},
-        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
-    )
+    fig.update_layout(title="Live Operations Map", mapbox_style="carto-darkmatter" if not config.get('mapbox_api_key') else "dark", mapbox_accesstoken=config.get('mapbox_api_key'), mapbox=dict(center=dict(lat=32.5, lon=-117.02), zoom=10.5), margin={"r":0,"t":40,"l":0,"b":0}, legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
     return fig
 
 @st.cache_resource
 def initialize_app_components():
     """Initializes and caches all core application components on first run."""
     warnings.filterwarnings('ignore'); app_config = get_app_config()
+    # The restored function call is here.
     distributions = {k: _normalize_dist(v) for k, v in app_config['data']['distributions'].items()}
     data_manager = DataManager(app_config)
     engine = SimulationEngine(data_manager, app_config['simulation_params'], distributions)
@@ -400,7 +361,7 @@ def main():
         initialize_session_state(config)
         
         # --- Sidebar / Controls ---
-        st.sidebar.title("RedShield AI v13.0"); st.sidebar.markdown("**EMS Digital Twin (Stable)**")
+        st.sidebar.title("RedShield AI v13.1"); st.sidebar.markdown("**EMS Digital Twin (Stable)**")
         if st.sidebar.button("Advance Time (Simulate)"): st.session_state.current_hour = (st.session_state.current_hour + 0.5) % 24
         st.sidebar.metric("Current Simulation Time", f"{st.session_state.current_hour:.1f}h")
         factors = EnvFactors(is_holiday=st.sidebar.checkbox("Holiday Active"), is_payday=st.sidebar.checkbox("Is Payday"), weather_condition=st.sidebar.selectbox("Weather", ["Clear", "Rain"]), major_event_active=False, traffic_multiplier=1.0, base_rate=st.sidebar.slider("Incident Rate", 1, 20, 5), self_excitation_factor=0.0)
