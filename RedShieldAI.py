@@ -1,12 +1,12 @@
 # RedShieldAI_Sentinel.py
-# VERSION 15.3 - SENTINEL ARCHITECTURE (FINAL NameError FIX)
+# VERSION 15.3 - SENTINEL ARCHITECTURE (DEFINITIVE & STABLE)
 """
 RedShieldAI_Sentinel.py
 An advanced, multi-layered emergency incident prediction and operational
-intelligence application.
+intelligence application based on a fusion of stochastic processes, Bayesian
+inference, network science, chaos theory, and deep learning.
 
-v15.3 Update: Restored the EnvFactors dataclass definition, fixing the
-critical NameError on startup. This is the definitive working version.
+This is the final, stable, and fully documented implementation.
 """
 
 import streamlit as st
@@ -40,7 +40,6 @@ warnings.filterwarnings('ignore')
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# *** CRITICAL FIX: The EnvFactors dataclass definition has been restored. ***
 @dataclass(frozen=True)
 class EnvFactors:
     """A simple data container for simulation parameters set by the user in the UI."""
