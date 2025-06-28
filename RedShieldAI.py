@@ -4,12 +4,12 @@
 # This version has been fully analyzed, debugged, and refactored by a Software Development Engineer.
 #
 # KEY FIXES:
-# 1. [CRITICAL] Re-introduced the missing `SensitivityAnalyzer` class to resolve the `NameError`.
-# 2. [CRITICAL] Fixed logical error in `DataManager.__init__` by correcting the initialization order,
+# 1. [CRITICAL] Fixed logical error in `DataManager.__init__` by correcting the initialization order,
 #    ensuring zones are built before ambulances are assigned to them.
-# 3. [RUNTIME] Fixed `TypeError` from pydeck by sanitizing data types.
-# 4. [RUNTIME] Added robust handling for invalid geometries.
-# 5. [PERFORMANCE] Replaced MCMC with faster Variational Inference.
+# 2. [CRITICAL] Re-introduced the missing `SensitivityAnalyzer` class to resolve the `NameError`.
+# 3. [RUNTIME] Fixed `TypeError` from pydeck by sanitizing data types to standard Python floats.
+# 4. [RUNTIME] Added robust handling for invalid/empty geometries to prevent crashes.
+# 5. [PERFORMANCE] Replaced slow MCMC with fast Variational Inference for Bayesian updates.
 #
 # REFACTORING & IMPROVEMENTS:
 # 1. [ARCHITECTURE] Abstracted common UI logic into a helper function.
