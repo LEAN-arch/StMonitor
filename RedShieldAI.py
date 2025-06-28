@@ -1,20 +1,19 @@
 # RedShieldAI_Command_Suite.py
-# VERSION 10.8 - SDE FINAL REVIEW & PRODUCTION-READY FIXES
+# VERSION 10.9 - SDE FINAL REVIEW & CRITICAL FIXES
 #
 # This version has been fully analyzed, debugged, and refactored by a Software Development Engineer.
 #
 # KEY FIXES:
-# 1. [CRITICAL] Fixed incorrect (lat, lon) coordinate order in polygon creation.
-# 2. [CRITICAL] Re-engineered the `sjoin_nearest` logic for robust node assignment.
-# 3. [CRITICAL] Replaced missing `update_bayesian_priors` call with performant Variational Inference.
-# 4. [RUNTIME] Fixed `TypeError: vars() argument must have __dict__ attribute` by
-#    comprehensively sanitizing all DataFrames passed to pydeck.
-# 5. [RUNTIME] Added robust handling for invalid/empty geometries.
+# 1. [CRITICAL] Fixed `TypeError` in `StrategicAdvisor` instantiation by removing an incorrect argument.
+# 2. [CRITICAL] Fixed logical error in `DataManager.__init__` by correcting initialization order.
+# 3. [CRITICAL] Re-introduced the missing `SensitivityAnalyzer` class.
+# 4. [RUNTIME] Fixed `TypeError` from pydeck by sanitizing data types.
+# 5. [RUNTIME] Added robust handling for invalid geometries.
 #
 # REFACTORING & IMPROVEMENTS:
 # 1. [ROBUSTNESS] Added extensive input validation and error handling across all modules.
-# 2. [ARCHITECTURE] Reorganized UI into a clean, multi-tab layout for better user experience.
-# 3. [BEST PRACTICES] Improved caching strategy and data flow to minimize redundant computations.
+# 2. [ARCHITECTURE] Reorganized UI into a clean, multi-tab layout.
+# 3. [BEST PRACTICES] Improved caching strategy and data flow.
 """
 RedShieldAI_Command_Suite.py
 Digital Twin for Emergency Medical Services Management
@@ -108,30 +107,22 @@ def get_app_config() -> Dict[str, Any]:
                 },
                 'road_network': {
                     'nodes': {
-                        "N_Centro": {'pos': [32.53, -117.04]},
-                        "N_Otay": {'pos': [32.535, -116.965]},
-                        "N_Playas": {'pos': [32.52, -117.12]},
-                        "N_LaMesa": {'pos': [32.51, -117.01]},
-                        "N_SantaFe": {'pos': [32.46, -117.03]},
-                        "N_ElDorado": {'pos': [32.49, -116.97]}
+                        "N_Centro": {'pos': [32.53, -117.04]}, "N_Otay": {'pos': [32.535, -116.965]},
+                        "N_Playas": {'pos': [32.52, -117.12]}, "N_LaMesa": {'pos': [32.51, -117.01]},
+                        "N_SantaFe": {'pos': [32.46, -117.03]}, "N_ElDorado": {'pos': [32.49, -116.97]}
                     },
                     'edges': [
-                        ["N_Centro", "N_LaMesa", 5],
-                        ["N_Centro", "N_Playas", 12],
-                        ["N_LaMesa", "N_Otay", 10],
-                        ["N_LaMesa", "N_SantaFe", 8],
+                        ["N_Centro", "N_LaMesa", 5], ["N_Centro", "N_Playas", 12],
+                        ["N_LaMesa", "N_Otay", 10], ["N_LaMesa", "N_SantaFe", 8],
                         ["N_Otay", "N_ElDorado", 6]
                     ]
                 }
             },
             'model_params': {
-                'risk_diffusion_factor': 0.1,
-                'risk_diffusion_steps': 3,
+                'risk_diffusion_factor': 0.1, 'risk_diffusion_steps': 3,
                 'risk_weights': {'prior': 0.4, 'traffic': 0.3, 'incidents': 0.3},
-                'incident_load_factor': 0.25,
-                'response_time_turnout_penalty': 3.0,
-                'recommendation_deficit_threshold': 1.0,
-                'recommendation_improvement_threshold': 1.0,
+                'incident_load_factor': 0.25, 'response_time_turnout_penalty': 3.0,
+                'recommendation_deficit_threshold': 1.0, 'recommendation_improvement_threshold': 1.0,
                 'hawkes_intensity': 0.2
             },
             'simulation_params': {
@@ -184,6 +175,7 @@ class DataManager:
 
     @st.cache_resource
     def _build_road_graph(_self) -> nx.Graph:
+        """Builds road graph with error handling."""
         G = nx.Graph()
         network_config = _self.config.get('road_network', {})
         for node, data in network_config.get('nodes', {}).items(): G.add_node(node, pos=data['pos'])
@@ -192,6 +184,7 @@ class DataManager:
 
     @st.cache_resource
     def _load_or_compute_graph_embeddings(_self) -> Dict[str, np.ndarray]:
+        """Loads or computes Node2Vec embeddings with caching."""
         cache_file = CACHE_DIR / "graph_embeddings.pkl"
         if cache_file.exists():
             try:
@@ -207,13 +200,14 @@ class DataManager:
 
     @st.cache_resource
     def _build_zones_gdf(_self) -> gpd.GeoDataFrame:
+        """Builds zones GeoDataFrame with correct coordinate order and validation."""
         zones = _self.config.get('zones', {})
         if not zones: return gpd.GeoDataFrame()
         valid_zones = []
         for name, data in zones.items():
             if 'polygon' in data and isinstance(data['polygon'], list) and len(data['polygon']) >= 3:
                 try:
-                    poly = Polygon([(lon, lat) for lat, lon in data['polygon']])
+                    poly = Polygon([(lon, lat) for lat, lon in data['polygon']]) # Corrected coordinate order
                     if not poly.is_valid: poly = poly.buffer(0)
                     if not poly.is_empty:
                         data['name'] = name; data['geometry'] = poly
@@ -226,24 +220,24 @@ class DataManager:
         gdf_projected = gdf.to_crs(PROJECTED_CRS)
         gdf['centroid'] = gdf_projected.geometry.centroid.to_crs(GEOGRAPHIC_CRS)
         
-        graph_nodes_gdf = gpd.GeoDataFrame(
-            geometry=[Point(d['pos'][1], d['pos'][0]) for _, d in _self.road_graph.nodes(data=True)],
-            index=list(_self.road_graph.nodes()), crs=GEOGRAPHIC_CRS
-        ).to_crs(PROJECTED_CRS)
+        graph_nodes_gdf = gpd.GeoDataFrame(geometry=[Point(d['pos'][1], d['pos'][0]) for _, d in _self.road_graph.nodes(data=True)], index=list(_self.road_graph.nodes()), crs=GEOGRAPHIC_CRS).to_crs(PROJECTED_CRS)
         
         left_gdf = gdf[['geometry']].reset_index().rename(columns={'name': 'zone_name'})
         right_gdf = graph_nodes_gdf[['geometry']].reset_index().rename(columns={'index': 'node_name'})
         
         nearest = gpd.sjoin_nearest(left_gdf, right_gdf, how='left', distance_col='distance')
         nearest = nearest.drop_duplicates(subset='zone_name').set_index('zone_name')
+        
         gdf['nearest_node'] = gdf.index.map(nearest['node_name'])
         
         return gdf.drop(columns=['polygon'])
 
     def _initialize_hospitals(self) -> Dict:
+        """Initializes hospitals with Point geometries."""
         return {n: {**d, 'location': Point(d['location'][1], d['location'][0])} for n, d in self.config.get('hospitals', {}).items()}
 
     def _initialize_ambulances(self) -> Dict:
+        """Initializes ambulances with location and node assignments."""
         ambulances = {}
         for amb_id, amb_data in self.config.get('ambulances', {}).items():
             home_zone = amb_data.get('home_base')
@@ -256,11 +250,13 @@ class DataManager:
         return ambulances
 
     def _initialize_prior_history(self) -> Dict:
+        """Initializes historical priors for Bayesian updates."""
         return {zone: {'mean_risk': data.get('prior_risk', 0.5), 'count': 1, 'variance': 0.1} for zone, data in self.zones_gdf.iterrows()}
 
     def assign_zones_to_incidents(self, incidents_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """Assigns zones to incidents using spatial join."""
         if incidents_gdf.empty or self.zones_gdf.empty: return incidents_gdf.assign(zone=None)
-        return incidents_gdf.sjoin(self.zones_gdf[['geometry']], how="left", predicate="intersects").drop(columns='index_right')
+        return incidents_gdf.sjoin(self.zones_gdf[['geometry']], how="left", predicate="intersects").drop(columns='index_right', errors='ignore')
 
 class SimulationEngine:
     """Generates synthetic incident data."""
@@ -369,12 +365,44 @@ class PredictiveAnalyticsEngine:
             for h, pred in enumerate(combined_pred): data.append({'zone': zone, 'hour': h, 'projected_risk': float(pred)})
         return pd.DataFrame(data)
 
+class SensitivityAnalyzer:
+    """Performs sensitivity analysis on model parameters."""
+    def __init__(self, simulation_engine: SimulationEngine, predictive_engine: PredictiveAnalyticsEngine):
+        self.sim_engine = simulation_engine
+        self.pred_engine = predictive_engine
+        logger.info("SensitivityAnalyzer initialized.")
+
+    def analyze_sensitivity(self, env_factors: EnvFactors, parameters: Dict[str, List[float]], iterations: int = 10) -> pd.DataFrame:
+        """Analyzes sensitivity to parameter changes."""
+        results = []
+        base_state = self.sim_engine.get_live_state(env_factors)
+        base_risk = self.pred_engine.calculate_holistic_risk(base_state)[1]
+        base_anomaly = self.pred_engine.calculate_information_metrics(base_state)[0]
+        
+        for param, values in parameters.items():
+            for value in values:
+                for _ in range(iterations):
+                    modified_factors = EnvFactors(
+                        env_factors.is_holiday, env_factors.is_payday, env_factors.weather_condition,
+                        env_factors.major_event_active,
+                        value if param == 'traffic_multiplier' else env_factors.traffic_multiplier,
+                        int(value) if param == 'base_rate' else env_factors.base_rate,
+                        value if param == 'self_excitation_factor' else env_factors.self_excitation_factor
+                    )
+                    state = self.sim_engine.get_live_state(modified_factors)
+                    risk = self.pred_engine.calculate_holistic_risk(state)[1]
+                    anomaly = self.pred_engine.calculate_information_metrics(state)[0]
+                    risk_diff = np.mean([abs(risk.get(node, 0) - base_risk.get(node, 0)) for node in self.pred_engine.dm.road_graph.nodes()])
+                    results.append({'parameter': param, 'value': value, 'risk_diff': risk_diff, 'anomaly_diff': abs(anomaly - base_anomaly)})
+        return pd.DataFrame(results)
+
 class StrategicAdvisor:
     """Handles resource reallocation."""
     def __init__(self, data_manager: DataManager, model_params: Dict):
         self.dm, self.params = data_manager, model_params
         
     def calculate_projected_response_time(self, zone: str, ambulances: List[Dict]) -> float:
+        """Calculates minimum response time to a zone."""
         if not zone or zone not in self.dm.zones_gdf.index or not ambulances: return DEFAULT_RESPONSE_TIME
         zone_node = self.dm.zones_gdf.loc[zone, 'nearest_node']
         if pd.isna(zone_node): return DEFAULT_RESPONSE_TIME
@@ -388,6 +416,7 @@ class StrategicAdvisor:
         return min_time if min_time != float('inf') else DEFAULT_RESPONSE_TIME
         
     def recommend_resource_reallocations(self, risk_scores: Dict) -> List[Dict]:
+        """Recommends ambulance reallocations based on risk and response times."""
         available = [{'id': amb_id, **d} for amb_id, d in self.dm.ambulances.items() if d.get('status') == 'Disponible']
         if not available: return []
         perf = {z: {'risk': risk_scores.get(d['node'], 0), 'rt': self.calculate_projected_response_time(z, available)} for z, d in self.dm.zones_gdf.iterrows() if 'node' in d}
@@ -415,11 +444,7 @@ class VisualizationSuite:
         prior_df = prior_df.copy(); posterior_df = posterior_df.copy()
         prior_df['type'], posterior_df['type'] = 'Prior (Historical)', 'Posterior (Current)'
         combined = pd.concat([prior_df, posterior_df], ignore_index=True)
-        return alt.Chart(combined).mark_bar(opacity=0.8).encode(
-            x=alt.X('risk:Q', title='Risk Level'), y=alt.Y('zone:N', title='Zone', sort='-x'),
-            color=alt.Color('type:N', title='Risk Type', scale=alt.Scale(range=[self.config['colors']['primary'], self.config['colors']['secondary']])),
-            tooltip=['zone', alt.Tooltip('risk', format='.3f')]
-        ).properties(title="Bayesian Risk Analysis").interactive()
+        return alt.Chart(combined).mark_bar(opacity=0.8).encode(x=alt.X('risk:Q', title='Risk Level'), y=alt.Y('zone:N', title='Zone', sort='-x'), color=alt.Color('type:N', title='Risk Type', scale=alt.Scale(range=[self.config['colors']['primary'], self.config['colors']['secondary']])), tooltip=['zone', alt.Tooltip('risk', format='.3f')]).properties(title="Bayesian Risk Analysis").interactive()
 
 def prepare_visualization_data(data_manager: DataManager, risk_scores: Dict, all_incidents: List, style: Dict) -> Tuple[gpd.GeoDataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Prepares data for visualizations with type sanitization."""
@@ -430,8 +455,7 @@ def prepare_visualization_data(data_manager: DataManager, risk_scores: Dict, all
     inc_data = [{'name': f"I: {i.get('id', 'N/A')}", 'tooltip_text': f"Type: {i.get('type', 'N/A')}<br>Triage: {i.get('triage', 'N/A')}", 'lon': float(i['location'].x), 'lat': float(i['location'].y), 'color': style['colors']['hawkes_echo'] if i.get('is_echo', False) else style['colors']['accent_crit'], 'radius': float(style['sizes']['hawkes_echo'] if i.get('is_echo', False) else style['sizes']['incident_base'])} for i in all_incidents if i.get('location') and isinstance(i.get('location'), Point) and not i['location'].is_empty]
     inc_df = pd.DataFrame(inc_data)
     heat_df = pd.DataFrame([{"lon": float(i['location'].x), "lat": float(i['location'].y)} for i in all_incidents if i.get('location') and isinstance(i.get('location'), Point) and not i['location'].is_empty and not i.get('is_echo')])
-    zones_gdf = data_manager.zones_gdf.copy()
-    zones_gdf['risk'] = zones_gdf['node'].map(risk_scores).fillna(0.0).astype(float)
+    zones_gdf = data_manager.zones_gdf.copy(); zones_gdf['risk'] = zones_gdf['node'].map(risk_scores).fillna(0.0).astype(float)
     max_risk = max(0.01, zones_gdf['risk'].max())
     zones_gdf['fill_color'] = zones_gdf['risk'].apply(lambda r: [220, 53, 69, int(200 * (r / max_risk))]).tolist()
     return zones_gdf, hosp_df, amb_df, inc_df, heat_df
@@ -439,7 +463,7 @@ def prepare_visualization_data(data_manager: DataManager, risk_scores: Dict, all
 def create_deck_gl_map(zones_gdf: gpd.GeoDataFrame, hospital_df: pd.DataFrame, ambulance_df: pd.DataFrame, incident_df: pd.DataFrame, heatmap_df: pd.DataFrame, app_config: Dict) -> pdk.Deck:
     """Creates a Deck.gl map with sanitized data."""
     style, layers = app_config['styling'], []
-    if not zones_gdf.empty: layers.append(pdk.Layer("PolygonLayer", data=zones_gdf, get_polygon="geometry.exterior.coords", filled=True, extruded=True, get_elevation=f"risk * {style['map_elevation_multiplier']}", get_fill_color="fill_color", opacity=0.1, pickable=True))
+    if not zones_gdf.empty: layers.append(pdk.Layer("PolygonLayer", data=zones_gdf, get_polygon="geometry.exterior.coords", filled=True, stroked=False, extruded=True, get_elevation=f"risk * {style['map_elevation_multiplier']}", get_fill_color="fill_color", opacity=0.1, pickable=True))
     if not hospital_df.empty: layers.append(pdk.Layer("IconLayer", data=hospital_df, get_icon="icon_data", get_position='[lon, lat]', get_size=style['sizes']['hospital'], size_scale=15, pickable=True))
     if not ambulance_df.empty: layers.append(pdk.Layer("IconLayer", data=ambulance_df, get_icon="icon_data", get_position='[lon, lat]', get_size='size', size_scale=15, pickable=True))
     if not heatmap_df.empty: layers.insert(0, pdk.Layer("HeatmapLayer", data=heatmap_df, get_position='[lon, lat]', opacity=0.3, aggregation='MEAN', threshold=0.1))
@@ -455,12 +479,12 @@ def initialize_app_components():
     data_manager = DataManager(app_config)
     engine = SimulationEngine(data_manager, app_config['simulation_params'], distributions)
     predictor = PredictiveAnalyticsEngine(data_manager, app_config['model_params'], distributions)
-    advisor = StrategicAdvisor(data_manager, predictor, app_config['model_params'])
+    advisor = StrategicAdvisor(data_manager, app_config['model_params'])
     sensitivity_analyzer = SensitivityAnalyzer(engine, predictor)
     plotter = VisualizationSuite(app_config['styling'])
     return data_manager, engine, predictor, advisor, sensitivity_analyzer, plotter, app_config
 
-def render_intel_briefing(anomaly: float, entropy: float, mutual_info: float, recommendations: List[Dict], config: Dict):
+def render_intel_briefing(anomaly: float, entropy: float, mutual_info: float, recommendations: List[Dict]):
     """Renders the intelligence briefing section."""
     st.subheader("Intel Briefing and Recommendations")
     status = "ANOMALOUS" if anomaly > 0.2 else "ELEVATED" if anomaly > 0.1 else "NOMINAL"
@@ -473,8 +497,8 @@ def render_intel_briefing(anomaly: float, entropy: float, mutual_info: float, re
 
 def main():
     """Main application entry point."""
-    st.set_page_config(page_title="RedShield AI v10.8", layout="wide")
-    st.title("RedShield AI Command Suite"); st.markdown("**Digital Twin for Emergency Medical Services Management** | Version 10.8")
+    st.set_page_config(page_title="RedShield AI v10.9", layout="wide")
+    st.title("RedShield AI Command Suite"); st.markdown("**Digital Twin for Emergency Medical Services Management** | Version 10.9")
     
     if 'current_hour' not in st.session_state: st.session_state.current_hour = 0.0
     st.session_state.current_hour = (st.session_state.current_hour + 0.1) % 24
@@ -491,11 +515,11 @@ def main():
         factors = EnvFactors(is_holiday, is_payday, weather, False, 1.0, base_rate, excitation)
         
         live_state = engine.get_live_state(factors, st.session_state.current_hour)
-        prior_risks, risk = predictor.calculate_holistic_risk(live_state)
+        _, risk = predictor.calculate_holistic_risk(live_state)
         anomaly, entropy, _, _, mutual_info = predictor.calculate_information_metrics(live_state)
         recs = advisor.recommend_resource_reallocations(risk)
         
-        render_intel_briefing(anomaly, entropy, mutual_info, recs, config)
+        render_intel_briefing(anomaly, entropy, mutual_info, recs)
         
         st.divider()
         st.subheader("Operations Map")
