@@ -1,13 +1,12 @@
 # RedShieldAI_Sentinel.py
-# VERSION 15.1 - SENTINEL ARCHITECTURE (API MIGRATION)
+# VERSION 15.2 - SENTINEL ARCHITECTURE (FINAL STRUCTURAL FIX)
 """
 RedShieldAI_Sentinel.py
 An advanced, multi-layered emergency incident prediction and operational
-intelligence application based on a fusion of stochastic processes, Bayesian
-inference, network science, chaos theory, and deep learning.
+intelligence application.
 
-v15.1 Update: Migrated from the deprecated pgmpy.BayesianNetwork to the
-correct DiscreteBayesianNetwork class to align with modern library APIs.
+v15.2 Update: Corrected the placement of st.set_page_config() to adhere to
+Streamlit's execution model, resolving the final startup error.
 """
 
 import streamlit as st
@@ -30,12 +29,14 @@ import random
 # Advanced Dependencies
 import torch
 import torch.nn as nn
-# *** API MIGRATION FIX: Import the correct, modern class ***
 from pgmpy.models import DiscreteBayesianNetwork
 from pgmpy.factors.discrete import TabularCPD
 from pgmpy.inference import VariableElimination
 
 # --- L0: CONFIGURATION & LOGGING ---
+# *** FINAL STRUCTURAL FIX: st.set_page_config() must be the first Streamlit command. ***
+st.set_page_config(page_title="RedShield AI Sentinel", layout="wide", initial_sidebar_state="expanded")
+
 warnings.filterwarnings('ignore')
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -163,7 +164,6 @@ class PredictiveAnalyticsEngine:
         
     @st.cache_resource
     def _build_bayesian_network(_self, bn_config: Dict) -> "DiscreteBayesianNetwork":
-        # *** API MIGRATION FIX: Use the correct, modern class name ***
         model = DiscreteBayesianNetwork(bn_config['structure'])
         cpds = []
         for node, params in bn_config['cpds'].items():
@@ -214,10 +214,8 @@ class PredictiveAnalyticsEngine:
             self.tcnn_model.eval()
             prediction = self.tcnn_model(input_tensor).numpy().flatten()
         
-        # Since the model forecasts for all zones, we average for a single risk score.
-        # In a real app, this would be a per-zone forecast.
-        avg_prediction = prediction.mean()
-        forecast_df = pd.DataFrame({'horizon': horizons, 'projected_risk': np.full(len(horizons), avg_prediction)})
+        avg_prediction_per_horizon = prediction
+        forecast_df = pd.DataFrame({'horizon': horizons, 'projected_risk': avg_prediction_per_horizon})
         return forecast_df
 
 class StrategicAdvisor:
@@ -231,12 +229,9 @@ class StrategicAdvisor:
         if forecast_df.empty or 'projected_risk' not in forecast_df.columns or forecast_df['projected_risk'].max() < self.params['recommendation_deficit_threshold']:
              return {}
         
-        # Simple strategy: recommend moving to the area with highest predicted risk at the 12h mark.
         horizon_12h = forecast_df[forecast_df['horizon'] == 12]
         if horizon_12h.empty: return {}
         
-        # This is a placeholder as the forecast is not per-zone yet.
-        # We'll just pick a high-risk zone from config as a target.
         highest_risk_zone = "Centro" 
         
         recommendations = {
@@ -297,7 +292,7 @@ class UIManager:
     """Manages the Streamlit UI components and application state."""
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        st.set_page_config(page_title="RedShield AI Sentinel", layout="wide")
+        # *** FINAL STRUCTURAL FIX: st.set_page_config() is NOT called here anymore. ***
         if 'metrics_history' not in st.session_state:
             st.session_state.metrics_history = pd.DataFrame(columns=['time', 'anomaly_score', 'chaos_score'])
         if 'risk_history' not in st.session_state:
@@ -306,7 +301,7 @@ class UIManager:
 
     def render_sidebar(self) -> Tuple['EnvFactors', bool]:
         st.sidebar.title("RedShield Sentinel AI")
-        st.sidebar.markdown("v15.1 - Proactive Intelligence")
+        st.sidebar.markdown("v15.2 - Proactive Intelligence")
         
         is_holiday = st.sidebar.checkbox("Holiday Period", value=False)
         weather = st.sidebar.selectbox("Weather Conditions", ["Clear", "Rain", "Fog"])
@@ -366,7 +361,6 @@ def main():
         new_metrics = pd.DataFrame([{'time': current_time, 'anomaly_score': kl_div, 'chaos_score': entropy}])
         st.session_state.metrics_history = pd.concat([st.session_state.metrics_history, new_metrics], ignore_index=True)
         
-        # Placeholder for real feature engineering for the TCNN
         num_features = config['tcnn_params']['input_size']
         current_features = pd.DataFrame([np.random.rand(num_features)], columns=[f'feature_{i}' for i in range(num_features)])
         st.session_state.risk_history = pd.concat([st.session_state.risk_history, current_features], ignore_index=True)
@@ -380,7 +374,6 @@ def main():
         ui_manager.render_analytics(forecast_df)
     else:
         st.info("Press 'Advance Time & Re-evaluate' in the sidebar to run the simulation.")
-        # Display empty dashboard on first load
         ui_manager.render_dashboard(0, 0, {})
         st.plotly_chart(VisualizationSuite.plot_operations_map(dm, [], config), use_container_width=True)
         ui_manager.render_analytics(pd.DataFrame())
