@@ -10,7 +10,7 @@ import numpy as np
 import geopandas as gpd
 from shapely.geometry import Point, Polygon
 import pydeck as pdk
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Any, Tuple
 import networkx as nx
 import os
@@ -48,9 +48,8 @@ def get_app_config() -> Dict:
             'city_boundary': [[32.54, -117.13], [32.43, -116.93], [32.54, -116.93]],
             'road_network': {
                 'nodes': {
-                    "N_Centro": {'pos': [32.53, -117.04]}, "N_Otay": {'pos': [32.535, -116.965]},
-                    "N_Playas": {'pos': [32.52, -117.12]}, "N_LaMesa": {'pos': [32.51, -117.01]},
-                    "N_SantaFe": {'pos': [32.46, -117.03]}, "N_ElDorado": {'pos': [32.49, -116.97]}
+                    "N_Centro": {'pos': [32.53, -117.04]}, "N_Otay": {'pos': [32.535, -116.965]}, "N_Playas": {'pos': [32.52, -117.12]},
+                    "N_LaMesa": {'pos': [32.51, -117.01]}, "N_SantaFe": {'pos': [32.46, -117.03]}, "N_ElDorado": {'pos': [32.49, -116.97]}
                 },
                 'edges': [["N_Centro", "N_LaMesa", 1.0], ["N_Centro", "N_Playas", 1.5], ["N_LaMesa", "N_Otay", 1.2], ["N_LaMesa", "N_SantaFe", 1.0], ["N_Otay", "N_ElDorado", 0.8]]
             },
@@ -100,6 +99,7 @@ class QuantumCognitiveEngine:
     def __init__(self, data_fabric: DataFusionFabric):
         self.data_fabric = data_fabric
         self.config = data_fabric.config
+        self.markov_matrix = np.array([[0.8, 0.15, 0.05], [0.3, 0.6, 0.1], [0.1, 0.4, 0.5]])
 
     @st.cache_data(ttl=60)
     def get_live_state(_self, environment_factors: Dict) -> Dict[str, Any]:
@@ -114,7 +114,6 @@ class QuantumCognitiveEngine:
         
         hist_inc_dist = _self.config['historical_incident_distribution']
         hist_tri_dist = _self.config['historical_triage_distribution']
-
         incidents = []
         minx, miny, maxx, maxy = _self.data_fabric.city_boundary.bounds
         for i in range(base_incident_rate):
@@ -168,13 +167,11 @@ class QuantumCognitiveEngine:
         for inc in live_state.get("active_incidents", []):
             zone = self._get_zone_for_point(inc['location'])
             if zone: incidents_by_zone[zone].append(inc)
-
         evidence_risk = {}
         for zone, data in self.data_fabric.zones.items():
             traffic = live_state.get('traffic_conditions', {}).get(zone, 0.5)
             incident_load = len(incidents_by_zone.get(zone, [])) * 0.25
             evidence_risk[zone] = data['prior_risk'] * 0.4 + traffic * 0.3 + incident_load * 0.3
-        
         posterior_risk = self._diffuse_risk_on_graph(evidence_risk)
         return prior_risks, posterior_risk
 
@@ -189,15 +186,12 @@ class QuantumCognitiveEngine:
                 if zone in incidents_by_zone:
                     incidents_by_zone[zone] += 1
                     total_incidents += 1
-        
         current_dist = {zone: 0 for zone in zones}
         if total_incidents > 0:
             current_dist = {zone: count / total_incidents for zone, count in incidents_by_zone.items()}
-        
         epsilon = 1e-9; kl_divergence = 0.0
         total_hist = sum(hist_dist.values())
         norm_hist_dist = {k: v / total_hist for k,v in hist_dist.items()} if total_hist > 0 else hist_dist
-        
         for zone in zones:
             p = current_dist.get(zone, 0) + epsilon; q = norm_hist_dist.get(zone, 0) + epsilon
             kl_divergence += p * np.log(p / q)
@@ -217,31 +211,40 @@ class QuantumCognitiveEngine:
         recommendations = []
         available_ambulances = [{'id': amb_id, **amb_data} for amb_id, amb_data in self.data_fabric.ambulances.items() if amb_data['status'] == 'Disponible']
         if not available_ambulances: return []
-        
         zone_perf = {z: {'risk': risk_scores.get(z, 0), 'response_time': self.calculate_projected_response_time(z, available_ambulances)} for z in self.data_fabric.zones}
         deficits = {z: perf['risk'] * perf['response_time'] for z, perf in zone_perf.items()}
         if not deficits: return []
         target_zone = max(deficits, key=deficits.get)
         if deficits[target_zone] < 1.0: return []
-        
         best_candidate = None; max_improvement = 0
         for amb_to_move in available_ambulances:
             original_pos = amb_to_move['location']
             other_ambulances = [amb for amb in available_ambulances if amb['id'] != amb_to_move['id']]
-            
             moved_amb_list = other_ambulances + [{**amb_to_move, 'location': self.data_fabric.zones[target_zone]['polygon'].centroid}]
             new_response_time = self.calculate_projected_response_time(target_zone, moved_amb_list)
             improvement = zone_perf[target_zone]['response_time'] - new_response_time
-
             if improvement > max_improvement:
                 max_improvement = improvement
-                best_candidate = (amb_to_move['id'], self._get_zone_for_point(original_pos), improvement, zone_perf[target_zone]['response_time'], new_response_time)
-        
+                best_candidate = (amb_to_move['id'], self._get_zone_for_point(original_pos), zone_perf[target_zone]['response_time'], new_response_time)
         if best_candidate:
-            amb_id, from_zone, _, old_time, new_time = best_candidate
-            reason = f"Reducir el tiempo de respuesta proyectado en '{target_zone}' de ~{old_time:.0f} min a ~{new_time:.0f} min."
-            recommendations.append({"unit": amb_id, "from": from_zone, "to": target_zone, "reason": reason})
+            amb_id, from_zone, old_time, new_time = best_candidate
+            if from_zone:
+                reason = f"Reducir el tiempo de respuesta proyectado en '{target_zone}' de ~{old_time:.0f} min a ~{new_time:.0f} min."
+                recommendations.append({"unit": amb_id, "from": from_zone, "to": target_zone, "reason": reason})
         return recommendations
+
+    def forecast_risk_over_time(self, current_risk: Dict, current_anomaly_score: float, hours_ahead: int) -> pd.DataFrame:
+        forecast_data = []
+        if current_anomaly_score > 0.2: initial_state_idx = 2
+        elif current_anomaly_score > 0.1: initial_state_idx = 1
+        else: initial_state_idx = 0
+        current_state_prob = np.zeros(3); current_state_prob[initial_state_idx] = 1.0
+        for h in range(hours_ahead):
+            current_state_prob = np.dot(current_state_prob, self.markov_matrix)
+            risk_multiplier = 1.0 + current_state_prob[1] * 0.1 + current_state_prob[2] * 0.3
+            for zone, risk in current_risk.items():
+                forecast_data.append({'hour': h + 1, 'zone': zone, 'projected_risk': risk * risk_multiplier})
+        return pd.DataFrame(forecast_data)
 
 class PlottingSME:
     def __init__(self, style_config: Dict):
@@ -251,24 +254,30 @@ class PlottingSME:
         prior_df = prior_df.copy(); posterior_df = posterior_df.copy()
         prior_df['type'] = 'A Priori (Histórico)'; posterior_df['type'] = 'A Posteriori (Actual + Difusión)'
         combined_df = pd.concat([prior_df, posterior_df])
-        chart = alt.Chart(combined_df).mark_bar(opacity=0.8).encode(
+        return alt.Chart(combined_df).mark_bar(opacity=0.8).encode(
             x=alt.X('risk:Q', title='Nivel de Riesgo'), y=alt.Y('zone:N', title='Zona', sort='-x'),
             color=alt.Color('type:N', title='Tipo de Riesgo', scale=alt.Scale(range=[self.config['colors']['primary'], self.config['colors']['secondary']])),
-            tooltip=[alt.Tooltip('zone', title='Zona'), alt.Tooltip('risk', title='Riesgo', format='.3f')]
+            tooltip=['zone', alt.Tooltip('risk', format='.3f')]
         ).properties(title="Análisis de Riesgo Bayesiano: A Priori vs. A Posteriori").interactive()
-        return chart
 
     def plot_distribution_comparison(self, hist_df: pd.DataFrame, current_df: pd.DataFrame) -> alt.Chart:
         hist_df = hist_df.copy(); current_df = current_df.copy()
         hist_df['type'] = 'Distribución Histórica'; current_df['type'] = 'Distribución Actual'
         combined_df = pd.concat([hist_df, current_df])
-        chart = alt.Chart(combined_df).mark_bar().encode(
+        return alt.Chart(combined_df).mark_bar().encode(
             x=alt.X('percentage:Q', title='Porcentaje de Incidentes', axis=alt.Axis(format='%')), y=alt.Y('zone:N', title='Zona', sort='-x'),
             color=alt.Color('type:N', title='Distribución', scale=alt.Scale(range=[self.config['colors']['primary'], self.config['colors']['secondary']])),
             row=alt.Row('type:N', title="", header=alt.Header(labelAngle=0, labelAlign='left')),
-            tooltip=[alt.Tooltip('zone', title='Zona'), alt.Tooltip('percentage', title='Porcentaje', format='.1%')]
+            tooltip=['zone', alt.Tooltip('percentage', title='Porcentaje', format='.1%')]
         ).properties(title="Análisis de Anomalía: Distribución de Incidentes").interactive()
-        return chart
+        
+    def plot_risk_forecast(self, forecast_df: pd.DataFrame) -> alt.Chart:
+        line = alt.Chart(forecast_df).mark_line(color=self.config['colors']['primary']).encode(
+            x=alt.X('hour:Q', title='Horas a Futuro'),
+            y=alt.Y('projected_risk:Q', title='Riesgo Proyectado', scale=alt.Scale(zero=False)),
+            tooltip=['hour', alt.Tooltip('projected_risk', format='.3f')]
+        )
+        return line.properties(title="Pronóstico de Riesgo por Zona a lo Largo del Tiempo").interactive()
 
 def prepare_visualization_data(data_fabric, risk_scores, all_incidents, style_config):
     hospital_df = pd.DataFrame([{"name": f"Hospital: {n}", "lon": d['location'].x, "lat": d['location'].y, "icon_data": {"url": style_config['icons']['hospital'], "width": 128, "height": 128, "anchorY": 128}} for n, d in data_fabric.hospitals.items()])
@@ -396,11 +405,36 @@ def render_analysis_tab(data_fabric, engine, plotter):
     current_df = pd.DataFrame(list(current_dist.items()), columns=['zone', 'percentage'])
     st.altair_chart(plotter.plot_distribution_comparison(hist_df, current_df), use_container_width=True)
 
+def render_forecasting_tab(engine, plotter):
+    st.header("Pronóstico de Riesgo Futuro")
+    st.info("Utilice esta herramienta para anticipar los niveles de riesgo en diferentes zonas y horizontes temporales, basado en el estado actual del sistema.")
+    
+    if 'analysis_state' not in st.session_state:
+        st.warning("Primero genere un 'Estado de Muestra' en la pestaña de 'Análisis Profundo' para poder realizar un pronóstico.")
+        return
+
+    live_state = st.session_state.analysis_state
+    _, current_risk = engine.calculate_holistic_risk(live_state)
+    anomaly_score, _, _ = engine.calculate_kld_anomaly_score(live_state)
+    
+    col1, col2 = st.columns(2)
+    zone_to_forecast = col1.selectbox("Seleccione una Zona para Pronosticar:", options=list(engine.data_fabric.zones.keys()))
+    hours_ahead = col2.select_slider("Seleccione el Horizonte Temporal (horas):", options=[3, 6, 12, 24, 72, 168], value=24)
+    
+    forecast_df = engine.forecast_risk_over_time(current_risk, anomaly_score, hours_ahead)
+    
+    zone_forecast_df = forecast_df[forecast_df['zone'] == zone_to_forecast]
+    if not zone_forecast_df.empty:
+        chart = plotter.plot_risk_forecast(zone_forecast_df)
+        st.altair_chart(chart, use_container_width=True)
+    else:
+        st.error("No se pudieron generar datos de pronóstico para la zona seleccionada.")
+        
 def render_validation_tab(data_fabric, engine, app_config):
     st.header("Validación y Calibración del Modelo")
     st.info("Compare las métricas de la simulación con los datos históricos del informe de la Cruz Roja de Tijuana de 2013.")
     if st.button("Ejecutar Simulación de Validación"):
-        env_factors = {'self_excitation_factor': 0.3, 'base_rate': 7} # Approximating a 'normal' day
+        env_factors = {'self_excitation_factor': 0.3, 'base_rate': 7}
         live_state = engine.get_live_state(env_factors)
         available_ambulances = [{'id': amb_id, **amb_data} for amb_id, amb_data in data_fabric.ambulances.items() if amb_data['status'] == 'Disponible']
         simulated_response_times = [engine.calculate_projected_response_time(z, available_ambulances) for z in data_fabric.zones]
@@ -419,28 +453,32 @@ def render_knowledge_center():
     st.markdown("""
     - **¿Qué es?** Un modelo estocástico para eventos que se "auto-excitan", donde un evento aumenta la probabilidad de que ocurran más eventos en el futuro cercano. Es ideal para modelar réplicas de terremotos o violencia de pandillas.
     - **¿Cómo se usa en esta app?** La simulación tiene dos partes:
-        1.  **Tasa Base (`μ`):** Incidentes aleatorios e independientes (como un Proceso de Poisson) que ocurren en toda la ciudad.
-        2.  **Excitación (`κ`):** Cuando ocurre un incidente de Triage Rojo (un "shock" para el sistema), el factor `κ` determina la probabilidad de que este genere una serie de incidentes "eco" de menor gravedad en sus inmediaciones.
+        1.  **Tasa Base (`μ`):** Incidentes aleatorios e independientes (como un Proceso de Poisson) que ocurren en toda la ciudad. Este es el control deslizante **μ (Tasa Base)**.
+        2.  **Excitación (`κ`):** Cuando ocurre un incidente de Triage Rojo (un "shock" para el sistema), el factor `κ` (el control deslizante **κ (Auto-Excitación)**) determina la probabilidad de que este genere una serie de incidentes "eco" de menor gravedad en sus inmediaciones.
     - **Significado para el Operador:** Esta herramienta le permite simular escenarios de "cascada". Un `κ` alto significa que debe estar preparado para que un solo evento grave desestabilice una zona entera, requiriendo más recursos de los que el incidente inicial sugeriría. Observar un alto número de "ecos" en el mapa es una señal visual de un sistema bajo estrés y con alta volatilidad.
     """)
-
     st.subheader("2. Inferencia Bayesiana y Difusión en Grafo (Cálculo de Riesgo)")
     st.markdown("""
-    - **¿Qué es?** La inferencia bayesiana es un método para actualizar nuestras creencias sobre algo a la luz de nueva evidencia. La difusión en grafo modela cómo una propiedad (en este caso, el riesgo) se propaga a través de una red interconectada.
+    - **¿Qué es?** Un método para actualizar creencias (riesgo) con nueva evidencia, y un modelo para ver cómo se propaga el riesgo en una red.
     - **¿Cómo se usa en esta app?**
-        1.  **Creencia a Priori:** Cada zona tiene un `prior_risk`, que es nuestra creencia histórica o base sobre el nivel de riesgo de esa zona, informado por el documento de 2013.
+        1.  **Creencia a Priori:** Cada zona tiene un riesgo histórico base (A Priori), informado por el documento de 2013.
         2.  **Evidencia:** Se recopila evidencia en tiempo real: el número de incidentes activos y las condiciones del tráfico en cada zona.
         3.  **Actualización Bayesiana:** La evidencia se combina con la creencia a priori para calcular un "riesgo de evidencia" inicial.
         4.  **Difusión en Grafo:** El riesgo no se queda contenido. La aplicación trata las zonas como nodos en una red y simula que el riesgo "se propaga" a las zonas vecinas.
         5.  **Riesgo a Posteriori:** El resultado final es un riesgo holístico y distribuido que representa nuestra creencia más actualizada sobre el peligro en cada zona.
-    - **Significado para el Operador:** El riesgo que se muestra en el mapa no es solo un recuento de incidentes; es una evaluación sofisticada que considera la historia, la situación actual y la interconexión de la ciudad. Permite una asignación de recursos proactiva.
+    - **Significado para el Operador:** El riesgo que se muestra en el mapa no es solo un recuento de incidentes; es una evaluación sofisticada que considera la historia, la situación actual y la interconexión de la ciudad. Permite una asignación proactiva de recursos.
     """)
-    
     st.subheader("3. Divergencia de Kullback-Leibler (Medición de Anomalía)")
     st.markdown("""
-    - **¿Qué es?** Una medida de la Teoría de la Información que cuantifica cuán "sorprendente" es una distribución de probabilidad en comparación con otra de referencia. Mide la "información perdida" cuando se usa una distribución para aproximar otra.
-    - **¿Cómo se usa en esta app?** Compara la **distribución porcentual actual** de los incidentes en las zonas (ej: Zona Río 70%, Otay 20%, etc.) con la **distribución histórica** documentada en el informe de 2013. Un valor alto significa que la distribución actual es muy inesperada.
-    - **Significado para el Operador:** La "Puntuación de Anomalía" es el indicador de más alto nivel de la salud del sistema. Un valor alto es una **alerta crítica** de que algo inusual está sucediendo a nivel ciudad (por ejemplo, una zona normalmente tranquila está generando la mayoría de los incidentes). Es la primera señal para que un comandante investigue *por qué* el comportamiento del sistema se ha desviado de la norma.
+    - **¿Qué es?** Una medida de la Teoría de la Información que cuantifica cuán "sorprendente" es una distribución de probabilidad en comparación con otra de referencia.
+    - **¿Cómo se usa en esta app?** Compara la **distribución porcentual actual** de los incidentes en las zonas con la norma histórica documentada en el informe de 2013. Un valor alto significa que la distribución actual es muy inesperada.
+    - **Significado para el Operador:** Es el indicador de más alto nivel de la salud del sistema. Un valor alto es una **alerta crítica** de que algo inusual está sucediendo a nivel ciudad. La pestaña "Análisis de Anomalías" le permite ver exactamente *qué* zona está causando la desviación.
+    """)
+    st.subheader("4. Cadena de Markov (Pronóstico de Estado del Sistema)")
+    st.markdown("""
+    - **¿Qué es?** Un modelo que describe una secuencia de eventos en la que la probabilidad de cada evento depende únicamente del estado del evento anterior.
+    - **¿Cómo se usa en esta app?** En la pestaña "Pronóstico de Riesgo", el sistema utiliza una Matriz de Transición de Markov para predecir la probabilidad de que el sistema pase de su estado actual (Nominal, Elevado, Anómalo) a otro estado en la siguiente hora. Esto modula la proyección de riesgo a largo plazo.
+    - **Significado para el Operador:** Proporciona una visión de la **inercia del sistema**. Un sistema en estado "Anómalo" tiene una mayor probabilidad de *permanecer* anómalo en el futuro cercano, lo que justifica una mayor vigilancia.
     """)
 
 def main():
@@ -457,7 +495,7 @@ def main():
 
     st.sidebar.title("RedShield AI")
     st.sidebar.write("Suite de Comando Estratégico")
-    tab_choice = st.sidebar.radio("Navegación", ["Sandbox de Comando", "Planificación Estratégica", "Análisis Profundo", "Validación del Modelo", "Centro de Conocimiento"], label_visibility="collapsed")
+    tab_choice = st.sidebar.radio("Navegación", ["Sandbox de Comando", "Planificación Estratégica", "Análisis Profundo", "Pronóstico de Riesgo", "Validación del Modelo", "Centro de Conocimiento"], label_visibility="collapsed")
     st.sidebar.divider()
     
     if tab_choice == "Sandbox de Comando":
@@ -466,6 +504,8 @@ def main():
         render_scenario_planner_tab(data_fabric, engine, st.session_state.app_config)
     elif tab_choice == "Análisis Profundo":
         render_analysis_tab(data_fabric, engine, plotter)
+    elif tab_choice == "Pronóstico de Riesgo":
+        render_forecasting_tab(engine, plotter)
     elif tab_choice == "Validación del Modelo":
         render_validation_tab(data_fabric, engine, st.session_state.app_config)
     elif tab_choice == "Centro de Conocimiento":
